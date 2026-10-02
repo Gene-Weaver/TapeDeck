@@ -1,6 +1,0 @@
-fastapi>=0.110
-uvicorn[standard]>=0.29
-pillow>=10
-pyusb>=1.2
-python-multipart>=0.0.9
-pytest>=8

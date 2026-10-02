@@ -3,6 +3,7 @@ import { counterValues, templateValues, batchValues } from './pattern.js';
 import { renderLabel, measureLabelWidth, simpleTextLayout, canvasToPng, hydrateLayout, serializeLayout, FONTS } from './render.js';
 import { Designer } from './designer.js';
 import { PrintTheater } from './printer-anim.js';
+import { api, canvasToPixels } from './api.js';
 
 const $ = (id) => document.getElementById(id);
 const CSS_PER_DOT = 96 / 180;            // zoom 1 = real size on a 96 dpi screen
@@ -14,12 +15,12 @@ const DEFAULTS = {
   pattern: { kind: 'counter', prefix: 'LEAF-', suffix: '', start: 1, end: 20, step: 1, pad: 4, tpl: 'LEAF-{n:06}', tStart: 1, tCount: 20, tStep: 1 },
   batch: { text: '', header: false, tpl: '' },
   style: { font: 'Helvetica', bold: false, italic: false, invert: false, auto: true, size: 22, align: 'center', border: false, lenMode: 'auto', lenMm: 30, padMm: 1 },
-  options: { autoCut: true, cutEach: 1, marginMm: 2, mirror: false, flip: false, check: true, save: false, sound: false },
+  options: { autoCut: true, cutEach: 1, marginMm: 2, mirror: false, flip: false, check: true, sound: false, mock: false, mockTape: 6 },
   designer: { sampleText: 'LEAF-000042', sampleN: 42, zoom: 6 },
 };
 let S = loadState();
 let layout = loadLayout();
-let config = { mock: false, tapes: [] };
+let config = { mock: false, version: '' };
 let values = [];
 let widths = [];
 let previewToken = 0;
@@ -162,11 +163,11 @@ async function renderAllForOutput() {
   $('toast').classList.add('hidden');
   return out;
 }
-function printBody(labels, extra = {}) {
+function printBody(labels) {
   const o = S.options;
-  return { tape_mm: S.tapeMm, labels: labels.map(l => ({ png: canvasToPng(l.canvas), name: l.name })),
-    auto_cut: o.autoCut, cut_each: Number(o.cutEach) || 1, mirror: o.mirror, margin_dots: Math.max(14, mmToDots(o.marginMm)),
-    flip: o.flip, check_media: o.check, save_pngs: o.save, ...extra };
+  return { tapeMm: S.tapeMm, labels: labels.map(l => ({ pixels: canvasToPixels(l.canvas), width: l.width, height: l.height, name: l.name })),
+    autoCut: o.autoCut, cutEach: Number(o.cutEach) || 1, mirror: o.mirror, marginDots: Math.max(14, mmToDots(o.marginMm)),
+    flip: o.flip, checkMedia: o.check, mock: o.mock, mockTape: Number(o.mockTape) || 6 };
 }
 
 // ---------------------------------------------------------------- print flow
@@ -176,49 +177,42 @@ async function doPrint() {
   if (!values.length) return;
   const labels = await renderAllForOutput();
   const t = tape(S.tapeMm);
-  theater.open({ labels, tapeMm: S.tapeMm, tapeLabel: t.label, onCancel: async () => { if (currentJob) await fetch(`/api/jobs/${currentJob}/cancel`, { method: 'POST' }); } });
+  theater.open({ labels, tapeMm: S.tapeMm, tapeLabel: t.label, onCancel: async () => { if (currentJob) await api.cancel(currentJob); } });
   let job;
   try {
-    const r = await fetch('/api/print', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(printBody(labels)) });
-    job = await r.json();
-    if (!r.ok) throw new Error(typeof job.detail === "string" ? job.detail : JSON.stringify(job.detail) || r.statusText);
+    job = await api.print(printBody(labels));
   } catch (e) {
-    theater.update({ state: 'error', error: e.message, printed: 0, index: 0, phase: '' }); return;
+    theater.update({ state: 'error', error: (e.message || String(e)).replace(/^Error invoking remote method 'print': Error: /, ''), printed: 0, index: 0, phase: '' }); return;
   }
   currentJob = job.id;
-  const poll = async () => {
-    try {
-      const r = await fetch(`/api/jobs/${job.id}`); const j = await r.json();
-      theater.update(j);
-      if (j.state === 'printing' || j.state === 'queued') setTimeout(poll, 250); else currentJob = null;
-    } catch (e) { setTimeout(poll, 1000); }
-  };
-  poll();
+  theater.update(job);
 }
+api.onJobProgress((j) => { if (j.id === currentJob) { theater.update(j); if (j.state !== 'printing' && j.state !== 'queued') currentJob = null; } });
 $('thClose').onclick = () => theater.close();
 $('btnPrint').onclick = doPrint;
 $('btnExport').onclick = async () => {
   if (!values.length) return;
   const labels = await renderAllForOutput();
-  const r = await fetch('/api/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(printBody(labels)) });
-  const j = await r.json();
-  if (r.ok) toast(`Saved ${j.count} PNGs to ${j.dir}`, false, 6000); else toast(typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail), true);
+  const j = await api.exportPngs({ labels: labels.map(l => ({ png: canvasToPng(l.canvas), name: l.name })), suggestedName: S.dataMode === 'single' ? 'label' : S.dataMode });
+  if (j.ok) { toast(`Saved ${j.count} PNGs to ${j.dir}`, false, 6000); api.openPath(j.dir); }
+  else if (!j.cancelled) toast(j.error || 'Export failed', true);
 };
 
 // ---------------------------------------------------------------- printer status
 async function pollStatus() {
   const pill = $('printerPill'), txt = pill.querySelector('.txt');
   try {
-    const r = await fetch('/api/status'); const j = await r.json();
+    const j = await api.status({ mock: S.options.mock, mockTape: Number(S.options.mockTape) || 6 });
     pill.classList.remove('pill-on', 'pill-off', 'pill-mock');
     if (j.connected) {
       const st = j.status;
       pill.classList.add(j.mock ? 'pill-mock' : 'pill-on');
-      txt.textContent = `${j.mock ? 'Mock printer' : 'PT-P700'} · ${st.has_media ? `${st.media_width_mm} mm ${st.media_type.toLowerCase()}` : 'no tape'}${st.errors.length ? ' · ' + st.errors.join(', ') : ''}`;
-      if (st.has_media && st.media_width_mm !== S.tapeMm && !(st.media_width_mm === 4 && S.tapeMm === 4)) txt.textContent += `  (app set to ${tape(S.tapeMm).label})`;
+      if (!st) { txt.textContent = j.busy ? 'Printing…' : 'Connected'; return; }
+      txt.textContent = `${j.mock ? 'Mock printer' : 'PT-P700'} · ${st.hasMedia ? `${st.mediaWidthMm} mm ${st.mediaType.toLowerCase()}` : 'no tape'}${st.errors.length ? ' · ' + st.errors.join(', ') : ''}${j.busy ? ' · printing' : ''}`;
+      if (st.hasMedia && st.mediaWidthMm !== S.tapeMm) txt.textContent += `  (app set to ${tape(S.tapeMm).label})`;
     } else { pill.classList.add('pill-off'); txt.textContent = j.error || 'Printer not found'; }
     pill.title = j.error || JSON.stringify(j.status || {}, null, 1);
-  } catch { pill.classList.add('pill-off'); pill.querySelector('.txt').textContent = 'Server unreachable'; }
+  } catch (e) { pill.classList.add('pill-off'); pill.querySelector('.txt').textContent = `Bridge error: ${e.message}`; }
 }
 
 // ---------------------------------------------------------------- UI wiring
@@ -298,18 +292,26 @@ $('zoom').addEventListener('input', () => { S.zoom = Number($('zoom').value); $(
 bindInput('useDesigner', () => S.useDesigner, v => S.useDesigner = v, 'change');
 // settings
 for (const [id, key, evt] of [['optAutoCut', 'autoCut', 'change'], ['optCutEach', 'cutEach'], ['optMarginMm', 'marginMm'], ['optMirror', 'mirror', 'change'], ['optFlip', 'flip', 'change'],
-  ['optCheck', 'check', 'change'], ['optSave', 'save', 'change']])
+  ['optCheck', 'check', 'change'], ['optMock', 'mock', 'change'], ['optMockTape', 'mockTape', 'change']])
   bindInput(id, () => S.options[key], v => S.options[key] = v, evt || 'input');
 $('optMarginMm').addEventListener('input', refreshPreview);
 $('thSound').checked = S.options.sound; $('thSound').addEventListener('change', () => { S.options.sound = $('thSound').checked; saveState(); });
 $('btnSettings').onclick = () => $('settings').classList.remove('hidden');
 $('settingsClose').onclick = () => $('settings').classList.add('hidden');
 $('settings').addEventListener('click', (e) => { if (e.target === $('settings')) $('settings').classList.add('hidden'); });
-async function setMock() {
-  const r = await fetch('/api/mock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mock: $('optMock').checked, tape_mm: Number($('optMockTape').value) }) });
-  config = { ...config, ...(await r.json()) }; pollStatus();
-}
-$('optMock').addEventListener('change', setMock); $('optMockTape').addEventListener('change', setMock);
+$('optMock').addEventListener('change', pollStatus); $('optMockTape').addEventListener('change', pollStatus);
+$('btnCheckUpdates').onclick = () => api.checkUpdates();
+$('verTxt').textContent = '';
+api.onUpdate((u) => {
+  const el = $('updateTxt');
+  if (u.state === 'available') el.textContent = `Update ${u.version} available${u.manual ? ' (download from GitHub)' : ', downloading…'}`;
+  else if (u.state === 'downloading') el.textContent = `Downloading update… ${u.percent}%`;
+  else if (u.state === 'downloaded') el.textContent = `Update ${u.version} ready. Restart to install.`;
+  else if (u.state === 'none') el.textContent = 'Up to date.';
+  else if (u.state === 'error') el.textContent = `Update check failed: ${u.message}`;
+  else if (u.state === 'disabled') el.textContent = 'Updates are checked in packaged builds only.';
+});
+api.onMenu((cmd) => { if (cmd === 'print') doPrint(); });
 
 // designer
 const designer = new Designer({
@@ -354,7 +356,7 @@ $('tplReset').onclick = () => { layout = simpleTextLayout({ tapeMm: S.tapeMm });
 
 // ---------------------------------------------------------------- boot
 (async () => {
-  try { config = await (await fetch('/api/config')).json(); $('optMock').checked = config.mock; $('optMockTape').value = config.mock_tape; } catch {}
+  try { config = await api.config(); if (config.mock) { S.options.mock = true; $('optMock').checked = true; } $('verTxt').textContent = `TapeDeck ${config.version}${config.packaged ? '' : ' (dev)'}`; } catch (e) { toast(`Startup error: ${e.message}`, true, 0); }
   await hydrateLayout(layout);
   $('tplName').value = layout.name || '';
   switchTab(S.tab);

@@ -2,9 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:;">
 <title>TapeDeck</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="/css/app.css">
+<link rel="stylesheet" href="css/app.css">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23ffd84a'/%3E%3Crect x='5' y='12' width='22' height='8' fill='%23111'/%3E%3C/svg%3E">
 </head>
 <body>
@@ -154,7 +155,7 @@ Betula papyrifera"></textarea></label>
     <label class="lbl">Zoom <input type="range" id="zoom" min="0.5" max="4" step="0.25" value="1.5" style="width:110px"><span id="zoomTxt"></span></label>
     <label class="check" title="Render Single/Pattern/Batch values through the Designer layout"><input type="checkbox" id="useDesigner"> Use Designer layout</label>
     <span class="spacer"></span>
-    <button id="btnExport" title="Save every label as a PNG into out/">Export PNGs</button>
+    <button id="btnExport" title="Save every label as a PNG to a folder you choose">Export PNGs</button>
     <button id="btnPrint" class="primary">Print</button>
   </div>
   <div class="strip-wrap">
@@ -194,17 +195,19 @@ Betula papyrifera"></textarea></label>
     <label class="check"><input type="checkbox" id="optMirror"> Mirror print (for clear tape behind glass)</label>
     <label class="check"><input type="checkbox" id="optFlip"> Flip pin order <small>(tick if a test print comes out upside-down)</small></label>
     <label class="check"><input type="checkbox" id="optCheck" checked> Verify loaded tape matches before printing</label>
-    <label class="check"><input type="checkbox" id="optSave"> Also save PNGs of each job to out/</label>
     <hr>
-    <label class="check"><input type="checkbox" id="optMock"> Mock printer <small>(no USB; renders to out/, animates)</small></label>
+    <label class="check"><input type="checkbox" id="optMock"> Mock printer <small>(no USB needed; simulates printing)</small></label>
     <label class="field"><span>Mock tape width</span><select id="optMockTape"><option>6</option><option>9</option><option>12</option><option>18</option><option>24</option></select></label>
-    <div class="row end"><button id="settingsClose" class="primary">Done</button></div>
+    <hr>
+    <div class="row"><span id="verTxt" class="muted"></span><span class="spacer"></span><button id="btnCheckUpdates">Check for updates</button></div>
+    <div id="updateTxt" class="hint" style="margin-top:6px"></div>
+    <div class="row end" style="margin-top:12px"><button id="settingsClose" class="primary">Done</button></div>
   </div>
 </div>
 
 <div id="toast" class="toast hidden"></div>
 
-<script src="/vendor/qrcode.js"></script>
-<script type="module" src="/js/app.js"></script>
+<script src="vendor/qrcode.js"></script>
+<script type="module" src="js/app.js"></script>
 </body>
 </html>

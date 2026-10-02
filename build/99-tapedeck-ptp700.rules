@@ -1,0 +1,3 @@
+# Linux udev rule: let regular users talk to the Brother PT-P700 over libusb.
+# sudo cp 99-tapedeck-ptp700.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger
+SUBSYSTEM=="usb", ATTR{idVendor}=="04f9", ATTR{idProduct}=="2061", MODE="0666", TAG+="uaccess"

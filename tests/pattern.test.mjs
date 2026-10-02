@@ -1,8 +1,8 @@
-// Run with: node tests/test_js_logic.mjs
+// Run with: npm test
 import assert from 'node:assert/strict';
-import { counterValues, templateValues, batchValues, expand, letters, parseCsv } from '../ui/js/pattern.js';
-import { code128 } from '../ui/js/codes.js';
-import { tape, mmToDots } from '../ui/js/tape.js';
+import { counterValues, templateValues, batchValues, expand, letters, parseCsv } from '../src/renderer/js/pattern.js';
+import { code128 } from '../src/renderer/js/codes.js';
+import { tape, mmToDots } from '../src/renderer/js/tape.js';
 
 assert.equal(letters(0), 'A'); assert.equal(letters(25), 'Z'); assert.equal(letters(26), 'AA'); assert.equal(letters(27, false), 'ab');
 assert.equal(expand('LEAF-{n:06}-{A}', { n: 3 }), 'LEAF-000003-D');

@@ -1,0 +1,30 @@
+{
+  "name": "tapedeck",
+  "productName": "TapeDeck",
+  "version": "0.1.0",
+  "description": "Label studio for the Brother PT-P700: single labels, sequential patterns, batches, a layout designer and an animated printer.",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "start:mock": "electron . --mock",
+    "test": "node --test \"tests/*.test.mjs\"",
+    "dist": "electron-builder",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win",
+    "dist:linux": "electron-builder --linux"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Gene-Weaver/TapeDeck.git"
+  },
+  "author": "William Weaver <willwe@umich.edu>",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9",
+    "usb": "^2.18.0"
+  }
+}
