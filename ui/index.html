@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TapeDeck</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/css/app.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23ffd84a'/%3E%3Crect x='5' y='12' width='22' height='8' fill='%23111'/%3E%3C/svg%3E">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="logo"></span><span>TapeDeck</span><small>PT-P700 label studio</small></div>
+  <div class="tape-ctl">
+    <label for="tapeMm">Tape</label>
+    <select id="tapeMm">
+      <option value="4">3.5 mm</option>
+      <option value="6" selected>6 mm</option>
+      <option value="9">9 mm</option>
+      <option value="12">12 mm</option>
+      <option value="18">18 mm</option>
+      <option value="24">24 mm</option>
+    </select>
+    <span id="tapeInfo" class="muted"></span>
+  </div>
+  <div id="printerPill" class="pill pill-off" title="Printer status"><span class="dot"></span><span class="txt">Looking for printer…</span></div>
+  <button id="btnSettings" class="icon-btn" title="Print settings">⚙</button>
+</header>
+
+<nav class="tabs" id="tabs">
+  <button data-tab="single" class="active">Single Text</button>
+  <button data-tab="pattern">Pattern</button>
+  <button data-tab="batch">Batch</button>
+  <button data-tab="designer">Designer</button>
+</nav>
+
+<main id="main">
+  <div class="work">
+    <!-- SINGLE -->
+    <section id="tab-single" class="tab active">
+      <h2>Single label</h2>
+      <label class="field"><span>Text <small>(Enter for a new line)</small></span>
+        <textarea id="singleText" rows="2">Hello tape</textarea></label>
+      <label class="field"><span>Copies</span><input type="number" id="singleCopies" value="1" min="1" max="999"></label>
+      <p class="hint">Style, font and length live in the <b>Style</b> panel on the right. Switch to the Designer tab for photos, QR codes and free placement.</p>
+    </section>
+
+    <!-- PATTERN -->
+    <section id="tab-pattern" class="tab">
+      <h2>Sequential pattern</h2>
+      <div class="seg" id="patternKind">
+        <button data-kind="counter" class="active">Prefix + counter + suffix</button>
+        <button data-kind="template">Template with tokens</button>
+      </div>
+      <div id="patCounter" class="grid2">
+        <label class="field"><span>Prefix</span><input id="patPrefix" value="LEAF-"></label>
+        <label class="field"><span>Suffix</span><input id="patSuffix" value=""></label>
+        <label class="field"><span>Start</span><input type="number" id="patStart" value="1"></label>
+        <label class="field"><span>End</span><input type="number" id="patEnd" value="20"></label>
+        <label class="field"><span>Step</span><input type="number" id="patStep" value="1"></label>
+        <label class="field"><span>Zero-pad to digits</span><input type="number" id="patPad" value="4" min="0" max="12"></label>
+      </div>
+      <div id="patTemplate" class="grid2 hidden">
+        <label class="field span2"><span>Template</span><input id="patTpl" value="LEAF-{n:06}" spellcheck="false"></label>
+        <label class="field"><span>Start n</span><input type="number" id="patTStart" value="1"></label>
+        <label class="field"><span>Count</span><input type="number" id="patTCount" value="20" min="0"></label>
+        <label class="field"><span>Step</span><input type="number" id="patTStep" value="1"></label>
+        <div class="hint span2">Tokens: <code>{n}</code> counter · <code>{n:06}</code> zero-padded · <code>{i}</code> 1-based index · <code>{A}</code>/<code>{a}</code> letters from n (0 → A, 26 → AA) · <code>{date}</code> · <code>{time}</code></div>
+      </div>
+      <div class="sample" id="patSample"></div>
+    </section>
+
+    <!-- BATCH -->
+    <section id="tab-batch" class="tab">
+      <h2>Batch from a list or CSV</h2>
+      <label class="field"><span>One label per line, or CSV/TSV <small>(paste, or <button type="button" id="btnBatchFile" class="link">load a file</button>)</small></span>
+        <textarea id="batchText" rows="9" spellcheck="false" placeholder="Quercus alba
+Acer saccharum
+Betula papyrifera"></textarea></label>
+      <input type="file" id="batchFile" accept=".csv,.tsv,.txt" hidden>
+      <div class="grid2">
+        <label class="check"><input type="checkbox" id="batchHeader"> First row is a header</label>
+        <label class="field"><span>Format <small>(optional, uses columns as tokens)</small></span><input id="batchTpl" placeholder="{c1}  or  {name} #{id}" spellcheck="false"></label>
+      </div>
+      <div class="sample" id="batchSample"></div>
+    </section>
+
+    <!-- DESIGNER -->
+    <section id="tab-designer" class="tab designer">
+      <div class="dz-toolbar">
+        <div class="group">
+          <span class="lbl">Add</span>
+          <button data-add="text">T Text</button>
+          <button data-add="image">▣ Photo</button>
+          <button data-add="qr">▦ QR</button>
+          <button data-add="barcode">▥ Barcode</button>
+          <button data-add="rect">▭ Box</button>
+          <button data-add="line">— Line</button>
+        </div>
+        <div class="group">
+          <span class="lbl">Template</span>
+          <input id="tplName" placeholder="name" size="12">
+          <button id="tplSave">Save</button>
+          <select id="tplList"><option value="">Load…</option></select>
+          <button id="tplDelete" title="Delete selected template">✕</button>
+          <button id="tplExport">Export</button>
+          <button id="tplImport">Import</button>
+          <input type="file" id="tplImportFile" accept=".json" hidden>
+          <button id="tplReset" title="Start from a blank layout">New</button>
+        </div>
+        <div class="group">
+          <span class="lbl">Preview value</span>
+          <input id="dzSampleText" value="LEAF-000042" size="14" spellcheck="false">
+          <label class="lbl">n <input id="dzSampleN" type="number" value="42" style="width:5em"></label>
+          <label class="lbl">Zoom <input id="dzZoom" type="range" min="2" max="12" value="6" step="1" style="width:90px"></label>
+        </div>
+      </div>
+      <div class="dz-body">
+        <div class="dz-stage" id="dzStage">
+          <canvas id="dzCanvas"></canvas>
+          <div class="dz-help">Drag to move · handles resize · ⌫ delete · ⌘D duplicate · arrows nudge</div>
+        </div>
+        <aside class="dz-props" id="dzProps"></aside>
+      </div>
+      <input type="file" id="dzImageFile" accept="image/*" hidden>
+    </section>
+  </div>
+
+  <!-- STYLE PANEL (simple layout, used by Single / Pattern / Batch) -->
+  <aside class="style-panel" id="stylePanel">
+    <h3>Style</h3>
+    <label class="field"><span>Font</span><input id="stFont" list="fontList" value="Helvetica"><datalist id="fontList"></datalist></label>
+    <div class="row">
+      <label class="check"><input type="checkbox" id="stBold"> Bold</label>
+      <label class="check"><input type="checkbox" id="stItalic"> Italic</label>
+      <label class="check"><input type="checkbox" id="stInvert"> Invert</label>
+    </div>
+    <label class="check"><input type="checkbox" id="stAuto" checked> Auto-fit text to tape height</label>
+    <label class="field"><span>Font size (dots)</span><input type="number" id="stSize" value="22" min="4" max="200" disabled></label>
+    <label class="field"><span>Align <small>(multi-line)</small></span>
+      <select id="stAlign"><option value="center">Center</option><option value="left">Left</option><option value="right">Right</option></select></label>
+    <label class="check"><input type="checkbox" id="stBorder"> Border</label>
+    <hr>
+    <label class="field"><span>Label length</span>
+      <select id="stLenMode"><option value="auto">Auto (fit content)</option><option value="fixed">Fixed</option></select></label>
+    <label class="field"><span>Fixed length (mm)</span><input type="number" id="stLenMm" value="30" min="5" max="500" step="0.5" disabled></label>
+    <label class="field"><span>Padding (mm)</span><input type="number" id="stPadMm" value="1" min="0" max="20" step="0.5"></label>
+  </aside>
+</main>
+
+<footer class="dock" id="dock">
+  <div class="dock-head">
+    <strong>Tape preview</strong>
+    <span id="previewStats" class="muted"></span>
+    <label class="lbl">Zoom <input type="range" id="zoom" min="0.5" max="4" step="0.25" value="1.5" style="width:110px"><span id="zoomTxt"></span></label>
+    <label class="check" title="Render Single/Pattern/Batch values through the Designer layout"><input type="checkbox" id="useDesigner"> Use Designer layout</label>
+    <span class="spacer"></span>
+    <button id="btnExport" title="Save every label as a PNG into out/">Export PNGs</button>
+    <button id="btnPrint" class="primary">Print</button>
+  </div>
+  <div class="strip-wrap">
+    <div id="strip" class="strip"></div>
+  </div>
+</footer>
+
+<!-- PRINT THEATER -->
+<div id="theater" class="theater hidden">
+  <div class="theater-inner">
+    <div class="theater-head">
+      <div><strong id="thTitle">Printing</strong> <span id="thSub" class="muted"></span></div>
+      <div class="row">
+        <label class="check"><input type="checkbox" id="thSound"> Sound</label>
+        <button id="thCancel">Cancel job</button>
+        <button id="thClose" class="hidden">Close</button>
+      </div>
+    </div>
+    <div class="scene" id="scene">
+      <svg id="printerSvg" viewBox="0 0 520 300" width="520" height="300" aria-label="Brother PT-P700"></svg>
+      <div class="label-out" id="labelOut"></div>
+      <div class="pile" id="pile"></div>
+    </div>
+    <div class="progress"><div class="bar" id="thBar"></div></div>
+    <div id="thStatus" class="th-status"></div>
+    <div id="thList" class="th-list"></div>
+  </div>
+</div>
+
+<!-- SETTINGS -->
+<div id="settings" class="modal hidden">
+  <div class="modal-card">
+    <h3>Print settings</h3>
+    <label class="check"><input type="checkbox" id="optAutoCut" checked> Auto-cut between labels</label>
+    <label class="field"><span>Cut every N labels</span><input type="number" id="optCutEach" value="1" min="1" max="255"></label>
+    <label class="field"><span>Feed margin (mm each side, min 2.0)</span><input type="number" id="optMarginMm" value="2" min="2" max="30" step="0.5"></label>
+    <label class="check"><input type="checkbox" id="optMirror"> Mirror print (for clear tape behind glass)</label>
+    <label class="check"><input type="checkbox" id="optFlip"> Flip pin order <small>(tick if a test print comes out upside-down)</small></label>
+    <label class="check"><input type="checkbox" id="optCheck" checked> Verify loaded tape matches before printing</label>
+    <label class="check"><input type="checkbox" id="optSave"> Also save PNGs of each job to out/</label>
+    <hr>
+    <label class="check"><input type="checkbox" id="optMock"> Mock printer <small>(no USB; renders to out/, animates)</small></label>
+    <label class="field"><span>Mock tape width</span><select id="optMockTape"><option>6</option><option>9</option><option>12</option><option>18</option><option>24</option></select></label>
+    <div class="row end"><button id="settingsClose" class="primary">Done</button></div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="/vendor/qrcode.js"></script>
+<script type="module" src="/js/app.js"></script>
+</body>
+</html>

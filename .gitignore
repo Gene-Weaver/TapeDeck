@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+*.egg-info/
+
+# Claude Code / scratch temp files
+*.tmp.*
+scratch_designs/
+
+# App output
+out/
+*.log
+
+# OS
+.DS_Store
+Icon?
