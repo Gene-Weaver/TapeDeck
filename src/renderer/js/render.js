@@ -319,13 +319,13 @@ export function textWidthFor(el, text, tapeMm) {
 }
 
 /**
- * Rod-wrap layout: QR, the name, a solid 5 mm box (the fold goes around the rod there), the name
+ * Rod-wrap layout: QR, the name, a solid 10 mm box (the fold goes around the rod there), the name
  * again, QR, so the label sticks to itself and reads on both faces.
  * `sampleText` sizes the fixed text boxes so every label in a series lines up identically.
  */
 export function wrapLayout(tapeMm, sampleText = 'UM-BZ-03', { qr = true } = {}) {
   const t = tape(tapeMm);
-  const pad = 4, gap = 10, lineW = 0, between = mmToDots(5), qrGap = 6;
+  const pad = 4, gap = 10, lineW = 0, between = mmToDots(10), qrGap = 6;
   const base = { ...defaultElement('text', t), text: '{text}', font: 'Helvetica', bold: true, align: 'center', autoSize: true, vCenter: true, hCenter: false };
   const w = textWidthFor(base, sampleText, tapeMm) + 6;
   const els = [];

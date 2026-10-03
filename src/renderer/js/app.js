@@ -7,7 +7,7 @@ import { api, canvasToPixels } from './api.js';
 
 const $ = (id) => document.getElementById(id);
 const CSS_PER_DOT = 96 / 180;            // zoom 1 = real size on a 96 dpi screen
-const STATE_KEY = 'tapedeck.state.v2', LAYOUT_KEY = 'tapedeck.layout.v3', TPL_KEY = 'tapedeck.templates';
+const STATE_KEY = 'tapedeck.state.v2', LAYOUT_KEY = 'tapedeck.layout.v4', TPL_KEY = 'tapedeck.templates';
 
 // ---------------------------------------------------------------- state
 const DEFAULTS = {
