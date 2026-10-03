@@ -29,8 +29,8 @@ assert.deepEqual(segmentValues({ type: 'letters', start: 'AY', end: 'BB' }), ['A
 assert.deepEqual(segmentValues({ type: 'number', start: 1, end: 3, pad: 2 }), ['01', '02', '03']);
 const ps = patternSeries(defaultPattern());
 assert.equal(ps.total, 156);
-assert.deepEqual(ps.values.map(v => v.text), ['UM-AA-01', 'UM-AA-02', 'UM-AA-03']);
-assert.deepEqual(ps.values[1].fields, { Project: 'UM', Item: 'AA', Number: '02' });
+assert.deepEqual(ps.values.map(v => v.text), ['UM-001-A', 'UM-001-B', 'UM-001-C']);
+assert.deepEqual(ps.values[1].fields, { Project: 'UM', Number: '001', Letter: 'B' });
 const all = patternSeries({ ...defaultPattern(), to: 156 });
-assert.equal(all.values[3].text, 'UM-AB-01'); assert.equal(all.values[155].text, 'UM-BZ-03'); assert.equal(all.values[155].n, 156);
+assert.equal(all.values[3].text, 'UM-002-A'); assert.equal(all.values[155].text, 'UM-052-C'); assert.equal(all.values[155].n, 156);
 console.log('segment pattern tests ok');

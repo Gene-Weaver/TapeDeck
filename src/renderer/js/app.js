@@ -19,6 +19,7 @@ const DEFAULTS = {
   designer: { zoom: 6 },
 };
 let S = loadState();
+if (S.pattern._v !== 2) { S.pattern = defaultPattern(); }   // 2026-10-02: Number before Letter
 let layout = loadLayout();
 let config = { mock: false, version: '' };
 let values = [], widths = [], seriesTotal = 0, previewToken = 0;
@@ -66,7 +67,7 @@ function computeValues() {
   if (S.mode === 'pattern') { const r = patternSeries(S.pattern); seriesTotal = r.total; return r.values; }
   const v = batchValues({ text: S.batch.text, header: S.batch.header, template: S.batch.tpl }); seriesTotal = v.length; return v;
 }
-function sampleValue() { return values[0] || { text: 'UM-AA-01', n: 1, i: 1, fields: {} }; }
+function sampleValue() { return values[0] || { text: 'UM-001-A', n: 1, i: 1, fields: {} }; }
 
 // ---------------------------------------------------------------- tape preview strip
 const strip = $('strip');
@@ -322,7 +323,7 @@ $('tplDelete').onclick = () => { const name = $('tplList').value; if (!name) ret
 $('tplExport').onclick = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([serializeLayout(layout)], { type: 'application/json' })); a.download = `${(layout.name || 'layout').replace(/[^\w-]+/g, '_')}.tapedeck.json`; a.click(); };
 $('tplImport').onclick = () => $('tplImportFile').click();
 $('tplImportFile').onchange = async () => { const f = $('tplImportFile').files[0]; $('tplImportFile').value = ''; if (!f) return; try { const j = JSON.parse(await f.text()); if (!j.elements) throw new Error('not a layout'); await useLayout(j); toast('Layout imported'); } catch (e) { toast(`Import failed: ${e.message}`, true); } };
-function builtLayout() { values = computeValues(); return S.wrap ? wrapLayout(S.tapeMm, longest(values) || 'UM-BZ-03') : plainLayout(S.tapeMm); }
+function builtLayout() { values = computeValues(); return S.wrap ? wrapLayout(S.tapeMm, longest(values) || 'UM-052-C') : plainLayout(S.tapeMm); }
 $('tplReset').onclick = () => { S.designer.manualZoom = false; useLayout(builtLayout(), ''); };
 $('optWrap').checked = S.wrap;
 $('optWrap').addEventListener('change', () => { S.wrap = $('optWrap').checked; saveState(); S.designer.manualZoom = false; useLayout(builtLayout(), ''); });
@@ -331,7 +332,7 @@ $('optWrap').addEventListener('change', () => { S.wrap = $('optWrap').checked; s
 (async () => {
   try { config = await api.config(); if (config.mock) { S.options.mock = true; $('optMock').checked = true; } $('verTxt').textContent = `TapeDeck ${config.version}${config.packaged ? '' : ' (dev)'}`; } catch (e) { toast(`Startup error: ${e.message}`, true, 0); }
   values = computeValues();
-  if (!layout) layout = S.wrap ? wrapLayout(S.tapeMm, longest(patternSeries({ ...S.pattern, from: 1, to: undefined }).values) || 'UM-BZ-03') : plainLayout(S.tapeMm);
+  if (!layout) layout = S.wrap ? wrapLayout(S.tapeMm, longest(patternSeries({ ...S.pattern, from: 1, to: undefined }).values) || 'UM-052-C') : plainLayout(S.tapeMm);
   await hydrateLayout(layout); saveLayout();
   $('tplName').value = layout.name || '';
   updateTapeInfo(); setMode(S.mode); afterPatternChange();

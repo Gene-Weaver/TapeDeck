@@ -174,9 +174,9 @@ export function patternSeries(pattern) {
 }
 
 export function defaultPattern() {
-  return { separator: '-', from: 1, to: 3, segments: [
+  return { separator: '-', from: 1, to: 3, _v: 2, segments: [
     { name: 'Project', type: 'text', value: 'UM' },
-    { name: 'Item', type: 'letters', start: 'AA', end: 'BZ' },
-    { name: 'Number', type: 'number', start: 1, end: 3, pad: 2 },
+    { name: 'Number', type: 'number', start: 1, end: 52, pad: 3 },
+    { name: 'Letter', type: 'letters', start: 'A', end: 'C' },
   ] };
 }
