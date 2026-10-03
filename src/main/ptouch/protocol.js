@@ -52,10 +52,16 @@ function unpackBits(data) {
   return Buffer.from(out);
 }
 
-/** One raster line: PackBits ('M 02') is what a live PT-P700 printed correctly with; 'Z' marks an all-white column. */
+/**
+ * One raster line, always PackBits. A live PT-P700 decodes TIFF/PackBits regardless of the
+ * 'M' setting: raw 16-byte lines were misread as compressed data (an all-0xFF line still came
+ * out black by coincidence, a banded one did not) and desynced the parser until a power cycle.
+ * 'Z' marks an all-white column.
+ */
 function rasterLine(line, packbits = true) {
   if (!line.some(b => b)) return Buffer.from([0x5a]);
-  const payload = packbits ? packBits(line) : Buffer.from(line);
+  const payload = packBits(line);
+  void packbits;
   return Buffer.concat([Buffer.from([0x47, payload.length & 0xff, payload.length >> 8]), payload]);
 }
 
@@ -90,9 +96,9 @@ function buildPage(lines, tape, first, last, opt) {
     advancedMode(last),
     cutEvery(opt.cutEach || 1),
     margin(opt.marginDots ?? 14),
-    compression(opt.packbits !== false),
+    compression(true),
   ];
-  for (const ln of lines) parts.push(rasterLine(ln, opt.packbits !== false));
+  for (const ln of lines) parts.push(rasterLine(ln));
   parts.push(printPage(last));
   return Buffer.concat(parts);
 }
