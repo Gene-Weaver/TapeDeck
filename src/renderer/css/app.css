@@ -49,6 +49,8 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }
 .card-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
 .card-head h2 { margin: 0; font-size: 15px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-right: 6px; }
 .card-head .group { display: flex; align-items: center; gap: 5px; }
+.wrap-toggle { margin: 0 6px 0 0; padding: 4px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg3); font-weight: 600; }
+.wrap-toggle:has(input:checked) { border-color: var(--accent); color: var(--accent); }
 .card-head .tpl { margin-left: auto; }
 button.small { padding: 4px 9px; font-size: 12.5px; }
 .mode { display: block; }

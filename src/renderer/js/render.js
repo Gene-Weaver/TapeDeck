@@ -15,7 +15,7 @@ export function defaultElement(type, t) {
     case 'text': return { ...base, text: '{text}', font: 'Helvetica', size: Math.round(t.pins * 0.7), bold: false, italic: false,
       align: 'left', w: null, autoSize: true, lineHeight: 1.15, invert: false };
     case 'image': return { ...base, w: t.pins, h: t.pins, src: null, dither: 'fs', threshold: 128, invert: false, keepAspect: true, _img: null };
-    case 'qr': return { ...base, size: t.pins, text: '{text}', ecc: 'M' };
+    case 'qr': return { ...base, size: t.pins, text: '{text}', ecc: 'M', quiet: 1 };
     case 'barcode': return { ...base, w: Math.round(t.pins * 3), h: Math.max(8, t.pins - 2), text: '{text}', showText: false };
     case 'rect': return { ...base, w: 60, h: t.pins - 2, stroke: 2, fill: false, radius: 4, vCenter: true };
     case 'line': return { ...base, w: 2, h: t.pins, stroke: 0 };
@@ -149,7 +149,7 @@ function renderElement(el, t, value) {
       const ctx = c.getContext('2d');
       ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
       ctx.strokeStyle = '#000';
-      el._qr = drawQr(ctx, resolve(el.text), 0, 0, w, el.ecc || 'M');
+      el._qr = drawQr(ctx, resolve(el.text), 0, 0, w, el.ecc || 'M', el.quiet ?? 1);
       break;
     }
     case 'barcode': {
@@ -316,14 +316,27 @@ export function textWidthFor(el, text, tapeMm) {
  * between them), then the name again, so the label sticks to itself and reads on both faces.
  * `sampleText` sizes the fixed text boxes so every label in a series lines up identically.
  */
-export function wrapLayout(tapeMm, sampleText = 'UM-BZ-03') {
+export function wrapLayout(tapeMm, sampleText = 'UM-BZ-03', { qr = true } = {}) {
   const t = tape(tapeMm);
-  const pad = 6, gap = 10, lineW = 2, between = mmToDots(5);
+  const pad = 4, gap = 10, lineW = 2, between = mmToDots(5), qrGap = 6;
   const base = { ...defaultElement('text', t), text: '{text}', font: 'Helvetica', bold: true, align: 'center', autoSize: true, vCenter: true, hCenter: false };
   const w = textWidthFor(base, sampleText, tapeMm) + 6;
-  const t1 = { ...base, id: uid(), x: pad, w };
-  const l1 = { ...defaultElement('line', t), id: uid(), x: pad + w + gap, w: lineW, h: t.pins, vCenter: true };
-  const l2 = { ...l1, id: uid(), x: l1.x + lineW + between };
-  const t2 = { ...base, id: uid(), x: l2.x + lineW + gap, w };
-  return { version: 1, name: 'Rod wrap', length: { mode: 'auto', dots: mmToDots(40), padding: pad }, border: false, elements: [t1, l1, l2, t2] };
+  const els = [];
+  let x = pad;
+  // QR codes carry the label text; full tape height, no internal quiet zone so the modules stay as large as possible
+  const mkQr = () => ({ ...defaultElement('qr', t), id: uid(), x, size: t.pins, text: '{text}', ecc: 'M', quiet: 0, vCenter: true, hCenter: false });
+  if (qr) { els.push(mkQr()); x += t.pins + qrGap; }
+  els.push({ ...base, id: uid(), x, w }); x += w + gap;
+  const l1 = { ...defaultElement('line', t), id: uid(), x, w: lineW, h: t.pins, vCenter: true }; els.push(l1); x += lineW + between;
+  els.push({ ...l1, id: uid(), x }); x += lineW + gap;
+  els.push({ ...base, id: uid(), x, w }); x += w;
+  if (qr) { x += qrGap; els.push(mkQr()); }
+  return { version: 1, name: 'Label wrap', length: { mode: 'auto', dots: mmToDots(40), padding: pad }, border: false, elements: els };
+}
+
+/** Plain sequential label: the name centred, auto length. */
+export function plainLayout(tapeMm) {
+  const t = tape(tapeMm);
+  const el = { ...defaultElement('text', t), text: '{text}', font: 'Helvetica', bold: true, align: 'center', autoSize: true, vCenter: true, hCenter: true, x: 0 };
+  return { version: 1, name: 'Plain', length: { mode: 'auto', dots: mmToDots(30), padding: 6 }, border: false, elements: [el] };
 }

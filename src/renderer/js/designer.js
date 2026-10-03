@@ -241,7 +241,8 @@ export class Designer {
       } else if (el.type === 'qr') {
         html += f('Content', `<input data-prop="text" value="${esc(el.text)}" spellcheck="false">`)
           + `<div class="grid2">${f('Size (mm)', num('size', mm(el.size)))}
-             ${f('Error correction', `<select data-prop="ecc">${['L', 'M', 'Q', 'H'].map(k => `<option ${el.ecc === k ? 'selected' : ''}>${k}</option>`).join('')}</select>`)}</div>`
+             ${f('Error correction', `<select data-prop="ecc">${['L', 'M', 'Q', 'H'].map(k => `<option ${el.ecc === k ? 'selected' : ''}>${k}</option>`).join('')}</select>`)}
+             ${f('Quiet zone (modules)', `<input type="number" data-prop="quiet" min="0" max="4" value="${el.quiet ?? 1}">`)}</div>`
           + (el._qr && !el._qr.ok ? '<p class="hint danger">Content cannot be encoded.</p>' : el._qr ? `<p class="hint">${el._qr.modules}×${el._qr.modules} modules, ${el._qr.module} dot(s) each</p>` : '');
       } else if (el.type === 'barcode') {
         html += f('Content (Code 128)', `<input data-prop="text" value="${esc(el.text)}" spellcheck="false">`)

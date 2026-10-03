@@ -76,6 +76,7 @@
   <section class="card" id="cardLayout">
     <div class="card-head">
       <h2>Layout</h2>
+      <label class="check wrap-toggle" title="On: QR · name · two fold lines · name · QR on one piece, to wrap around a rod. Off: just the name."><input type="checkbox" id="optWrap" checked> Label Wrap</label>
       <div class="group">
         <button data-add="text" class="small" title="Add text">T Text</button>
         <button data-add="image" class="small" title="Add a photo">▣ Photo</button>
@@ -93,7 +94,7 @@
         <button id="tplExport" class="small">Export</button>
         <button id="tplImport" class="small">Import</button>
         <input type="file" id="tplImportFile" accept=".json" hidden>
-        <button id="tplReset" class="small" title="Start over with the rod-wrap layout">Reset</button>
+        <button id="tplReset" class="small" title="Rebuild the layout from the Label Wrap setting">Reset</button>
       </div>
     </div>
     <div class="dz-stage" id="dzStage"><canvas id="dzCanvas"></canvas></div>
