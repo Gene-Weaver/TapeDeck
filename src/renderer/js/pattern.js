@@ -121,3 +121,62 @@ export function batchValues({ text = '', header = false, template = '' }) {
     return v;
   });
 }
+
+// ---- Segment patterns: {Project}-{Item}-{Number}, last segment cycles fastest -------------
+
+export function lettersToIndex(s) {   // inverse of letters(): 'A' -> 0, 'Z' -> 25, 'AA' -> 26, 'BZ' -> 77
+  s = String(s || 'A').toUpperCase().replace(/[^A-Z]/g, '') || 'A';
+  let n = -1;
+  for (const c of s) n = (n + 1) * 26 + (c.charCodeAt(0) - 65);
+  return n;
+}
+
+/** Expand one segment into its list of strings. */
+export function segmentValues(seg) {
+  const cap = 100000;
+  if (seg.type === 'letters') {
+    const a = lettersToIndex(seg.start), b = lettersToIndex(seg.end);
+    const lo = Math.min(a, b), hi = Math.min(Math.max(a, b), lo + cap);
+    const upper = !/[a-z]/.test(String(seg.start || ''));
+    const out = []; for (let k = lo; k <= hi; k++) out.push(letters(k, upper)); return out;
+  }
+  if (seg.type === 'number') {
+    const a = Number(seg.start) || 0, b = Number(seg.end ?? seg.start) || 0, step = Math.max(1, Math.abs(Number(seg.step) || 1));
+    const padW = Number(seg.pad) || 0;
+    const out = [];
+    if (a <= b) for (let v = a; v <= b && out.length < cap; v += step) out.push(pad(v, padW));
+    else for (let v = a; v >= b && out.length < cap; v -= step) out.push(pad(v, padW));
+    return out;
+  }
+  return [String(seg.value ?? '')];
+}
+
+/**
+ * pattern: { separator: '-', segments: [{ name, type: 'text'|'letters'|'number', ... }], from, to }
+ * Returns { values, total } where values are the [from..to] slice (1-based, inclusive) of the series.
+ * Each value: { text, n (1-based position in the series), i (1-based within the slice), fields: {name: part} }.
+ */
+export function patternSeries(pattern) {
+  const segs = (pattern.segments || []).filter(Boolean);
+  const lists = segs.map(segmentValues);
+  const total = lists.reduce((p, l) => p * l.length, segs.length ? 1 : 0);
+  const from = Math.max(1, Math.floor(Number(pattern.from) || 1));
+  const to = Math.min(total, Math.floor(Number(pattern.to) || total));
+  const sep = pattern.separator ?? '-';
+  const values = [];
+  for (let n = from; n <= to; n++) {
+    let rem = n - 1; const parts = new Array(lists.length);
+    for (let s = lists.length - 1; s >= 0; s--) { const L = lists[s].length; parts[s] = lists[s][rem % L]; rem = Math.floor(rem / L); }
+    const fields = {}; segs.forEach((sg, k) => { fields[sg.name || `s${k + 1}`] = parts[k]; });
+    values.push({ text: parts.join(sep), n, i: n - from + 1, fields });
+  }
+  return { values, total, from, to };
+}
+
+export function defaultPattern() {
+  return { separator: '-', from: 1, to: 3, segments: [
+    { name: 'Project', type: 'text', value: 'UM' },
+    { name: 'Item', type: 'letters', start: 'AA', end: 'BZ' },
+    { name: 'Number', type: 'number', start: 1, end: 3, pad: 2 },
+  ] };
+}

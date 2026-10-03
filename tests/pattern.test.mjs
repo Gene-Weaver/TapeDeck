@@ -22,3 +22,15 @@ assert.equal(code128('').length, 0);
 assert.ok(code128('LEAF-000001').length > 0);
 assert.equal(tape(6).pins, 42); assert.equal(mmToDots(25.4), 180);
 console.log('js logic tests ok');
+// segment patterns
+import { patternSeries, defaultPattern, lettersToIndex, segmentValues } from '../src/renderer/js/pattern.js';
+assert.equal(lettersToIndex('A'), 0); assert.equal(lettersToIndex('AA'), 26); assert.equal(lettersToIndex('BZ'), 77);
+assert.deepEqual(segmentValues({ type: 'letters', start: 'AY', end: 'BB' }), ['AY', 'AZ', 'BA', 'BB']);
+assert.deepEqual(segmentValues({ type: 'number', start: 1, end: 3, pad: 2 }), ['01', '02', '03']);
+const ps = patternSeries(defaultPattern());
+assert.equal(ps.total, 156);
+assert.deepEqual(ps.values.map(v => v.text), ['UM-AA-01', 'UM-AA-02', 'UM-AA-03']);
+assert.deepEqual(ps.values[1].fields, { Project: 'UM', Item: 'AA', Number: '02' });
+const all = patternSeries({ ...defaultPattern(), to: 156 });
+assert.equal(all.values[3].text, 'UM-AB-01'); assert.equal(all.values[155].text, 'UM-BZ-03'); assert.equal(all.values[155].n, 156);
+console.log('segment pattern tests ok');

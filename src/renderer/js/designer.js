@@ -205,7 +205,7 @@ export class Designer {
     const f = (label, inner) => `<label class="field"><span>${label}</span>${inner}</label>`;
     const chk = (label, prop, on) => `<label class="check"><input type="checkbox" data-prop="${prop}" ${on ? 'checked' : ''}> ${label}</label>`;
     const num = (prop, val, extra = '') => `<input type="number" data-prop="${prop}" data-unit="mm" value="${val}" step="0.1" ${extra}>`;
-    let html = `<h4>Layout</h4>
+    let html = `<div class="col"><h4>Layout</h4>
       ${f('Name', `<input data-lprop="name" value="${esc(L.name || '')}">`)}
       <div class="grid2">
         ${f('Length', `<select data-lprop="length.mode"><option value="auto" ${L.length.mode !== 'fixed' ? 'selected' : ''}>Auto</option><option value="fixed" ${L.length.mode === 'fixed' ? 'selected' : ''}>Fixed</option></select>`)}
@@ -220,6 +220,8 @@ export class Designer {
     }
     html += `</div>`;
     if (!L.elements.length) html += `<p class="hint">Add an element with the toolbar above.</p>`;
+    html += `</div><div class="col">`;
+    if (!el) html += `<p class="hint">Select an element on the canvas or in the list to edit it.</p>`;
     if (el) {
       html += `<h4>${el.type} properties</h4>`;
       if (el.type === 'text') {
@@ -258,6 +260,7 @@ export class Designer {
         ${f('Rotate', `<select data-prop="rotate">${[0, 90, 180, 270].map(r => `<option value="${r}" ${(el.rotate || 0) === r ? 'selected' : ''}>${r}°</option>`).join('')}</select>`)}
         <div class="row"><button data-act="dup">Duplicate</button><button data-act="fwd">Forward</button><button data-act="back">Back</button><button data-act="del" class="danger">Delete</button></div>`;
     }
+    html += `</div>`;
     root.innerHTML = html;
     // bindings
     root.querySelectorAll('[data-sel]').forEach(b => b.onclick = () => { this.selectedId = b.dataset.sel; this.render(); this.renderProps(); });

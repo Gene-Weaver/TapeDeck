@@ -302,3 +302,28 @@ export function measureLabelWidth(layout, value, tapeMm) {
   }
   return renderLabel(layout, value, tapeMm).width;
 }
+
+/** Width in dots of `text` rendered with element `el` at its auto-fit size for this tape. */
+export function textWidthFor(el, text, tapeMm) {
+  const t = tape(tapeMm);
+  const probe = { ...el, _resolved: text };
+  const size = el.autoSize ? fitTextSize(probe, Math.max(4, t.pins - 2), null) : Math.max(4, Math.round(el.size || 20));
+  return Math.ceil(measureText(probe, size).w);
+}
+
+/**
+ * Rod-wrap layout: the name, two vertical lines 5 mm apart (the fold goes around the rod
+ * between them), then the name again, so the label sticks to itself and reads on both faces.
+ * `sampleText` sizes the fixed text boxes so every label in a series lines up identically.
+ */
+export function wrapLayout(tapeMm, sampleText = 'UM-BZ-03') {
+  const t = tape(tapeMm);
+  const pad = 6, gap = 10, lineW = 2, between = mmToDots(5);
+  const base = { ...defaultElement('text', t), text: '{text}', font: 'Helvetica', bold: true, align: 'center', autoSize: true, vCenter: true, hCenter: false };
+  const w = textWidthFor(base, sampleText, tapeMm) + 6;
+  const t1 = { ...base, id: uid(), x: pad, w };
+  const l1 = { ...defaultElement('line', t), id: uid(), x: pad + w + gap, w: lineW, h: t.pins, vCenter: true };
+  const l2 = { ...l1, id: uid(), x: l1.x + lineW + between };
+  const t2 = { ...base, id: uid(), x: l2.x + lineW + gap, w };
+  return { version: 1, name: 'Rod wrap', length: { mode: 'auto', dots: mmToDots(40), padding: pad }, border: false, elements: [t1, l1, l2, t2] };
+}
