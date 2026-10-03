@@ -15,12 +15,11 @@ const DEFAULTS = {
   pattern: { kind: 'counter', prefix: 'LEAF-', suffix: '', start: 1, end: 20, step: 1, pad: 4, tpl: 'LEAF-{n:06}', tStart: 1, tCount: 20, tStep: 1 },
   batch: { text: '', header: false, tpl: '' },
   style: { font: 'Helvetica', bold: false, italic: false, invert: false, auto: true, size: 22, align: 'center', border: false, lenMode: 'auto', lenMm: 30, padMm: 1 },
-  options: { autoCut: true, cutEach: 1, marginMm: 2, mirror: false, flip: false, check: true, sound: false, mock: false, mockTape: 6, offsetDots: 5 },
+  options: { autoCut: true, cutEach: 1, marginMm: 2, mirror: false, flip: false, check: true, sound: false, mock: false, mockTape: 6, offsetDots: 2 },
   designer: { sampleText: 'LEAF-000042', sampleN: 42, zoom: 6 },
 };
 let S = loadState();
-if (S.options.offsetDots === 0 && !S.options._offsetSet) { S.options.offsetDots = 5; }
-S.options._offsetSet = true;
+if (S.options._offsetVer !== 2) { S.options.offsetDots = 2; S.options._offsetVer = 2; }   // calibrated 2026-10-02 on a 6 mm cassette
 let layout = loadLayout();
 let config = { mock: false, version: '' };
 let values = [];

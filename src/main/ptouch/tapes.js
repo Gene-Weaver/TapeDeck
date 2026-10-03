@@ -21,7 +21,7 @@ const TAPES = {
 
 /**
  * offsetDots shifts the band along the head to match where the cassette actually holds the tape
- * (a PT-P700 measured ~0.5 mm off centre). Positive moves the band toward higher pin numbers,
+ * (a PT-P700 measured ~2 dots off centre). Positive moves the band toward higher pin numbers,
  * which is toward the TOP of the label as printed (columns are packed bottom-up).
  */
 function tapeForMm(mm, offsetDots = 0) {
