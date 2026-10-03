@@ -5,7 +5,7 @@ export const HEAD_PINS = 128;
 export const FEED_MM_PER_S = 20;          // rough PT-P700 print speed, used for the animation
 
 // Full tape width is printable (capped by the 128-pin head). Keep in sync with src/main/ptouch/tapes.js.
-const fullPins = (mm) => Math.min(HEAD_PINS, Math.round(mm * DOTS_PER_MM));
+const fullPins = (mm) => Math.min(HEAD_PINS, Math.floor(mm * DOTS_PER_MM));   // never wider than the tape
 export const TAPES = {
   4:  { mm: 3.5, key: 4,  pins: fullPins(3.5), label: '3.5 mm' },
   6:  { mm: 6,   key: 6,  pins: fullPins(6),   label: '6 mm' },

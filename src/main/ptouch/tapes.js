@@ -9,7 +9,7 @@ const RASTER_BYTES = HEAD_PINS / 8;
 // The whole tape width is printable (verified on a PT-P700: ink lands right up to the tape edge),
 // so the band is the full width in dots, capped by the 128-pin head, centred on the head.
 // Brother's reference lists narrower "print areas" (6 mm -> 32 dots) which are just safe margins.
-const fullPins = (mm) => Math.min(HEAD_PINS, Math.round(mm * DOTS_PER_MM));
+const fullPins = (mm) => Math.min(HEAD_PINS, Math.floor(mm * DOTS_PER_MM));   // never wider than the tape
 const TAPES = {
   4: { widthMm: 3.5, pins: fullPins(3.5), label: '3.5 mm' },   // printer reports 3.5 mm tape as width 4
   6: { widthMm: 6, pins: fullPins(6), label: '6 mm' },

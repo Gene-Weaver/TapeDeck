@@ -19,7 +19,7 @@ test('packbits roundtrip and known values', () => {
 });
 
 test('tape table: full width, centred, offset clamps', () => {
-  assert.equal(tapeForMm(6).pins, 43); assert.equal(tapeForMm(12).pins, 85); assert.equal(tapeForMm(18).pins, 128); assert.equal(tapeForMm(24).pins, 128);
+  assert.equal(tapeForMm(6).pins, 42); assert.equal(tapeForMm(12).pins, 85); assert.equal(tapeForMm(18).pins, 127); assert.equal(tapeForMm(24).pins, 128);
   for (const k of Object.keys(TAPES)) { const t = tapeForMm(k); assert.ok(t.marginPins >= 0 && t.marginPins + t.pins <= 128); }
   assert.equal(tapeForMm(6, 5).marginPins, tapeForMm(6).marginPins + 5);
   assert.equal(tapeForMm(24, 9).marginPins, 0);
@@ -35,7 +35,7 @@ test('pixels -> raster lines places pins at margin, reversed', () => {
   const top = new Uint8Array(tape.pins); top[0] = 1;
   const [a] = P.pixelsToRasterLines(top, 1, tape.pins, tape), [b] = P.pixelsToRasterLines(top, 1, tape.pins, tape, true);
   assert.notDeepEqual(a, b);
-  assert.throws(() => P.pixelsToRasterLines(px, 1, 10, tape), /needs 43/);
+  assert.throws(() => P.pixelsToRasterLines(px, 1, 10, tape), /needs 42/);
 });
 
 test('columns are sent last-first so the label is not mirrored', () => {
@@ -111,7 +111,7 @@ test('feed and cut builds a one-line job that feeds and cuts', async () => {
 
 test('mock rejects wrong tape', async () => {
   const p = new Printer(new MockTransport({ tapeMm: 12, realtime: false }));
-  await assert.rejects(p.printPages([{ width: 5, height: 43, pixels: new Uint8Array(5 * 43) }], { tapeMm: 6 }), (e) => e instanceof PrintError && /12 mm/.test(e.message));
+  await assert.rejects(p.printPages([{ width: 5, height: 42, pixels: new Uint8Array(5 * 42) }], { tapeMm: 6 }), (e) => e instanceof PrintError && /12 mm/.test(e.message));
 });
 
 test('job manager runs a mock job and reports progress', async () => {

@@ -20,5 +20,5 @@ const w = code128('123456');
 assert.equal(w.length, 5 * 6 + 7);   // startC,12,34,56,check = 5 symbols*6 widths + stop*7
 assert.equal(code128('').length, 0);
 assert.ok(code128('LEAF-000001').length > 0);
-assert.equal(tape(6).pins, 43); assert.equal(mmToDots(25.4), 180);
+assert.equal(tape(6).pins, 42); assert.equal(mmToDots(25.4), 180);
 console.log('js logic tests ok');
