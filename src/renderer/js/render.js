@@ -57,7 +57,7 @@ function measureText(el, size) {
   let asc = Math.ceil(per[0].asc), desc = Math.ceil(per[per.length - 1].desc);
   if (asc + desc < 2) { asc = Math.ceil(fontAsc); desc = Math.ceil(fontDesc); }
   const h = (lines.length - 1) * lineH + asc + desc;
-  return { w: Math.ceil(w), lineH, asc, h: Math.max(1, h), lines };
+  return { w: Math.ceil(w), lineH, asc, h: Math.max(1, h), emH: lines.length * lineH, lines };
 }
 
 function fitTextSize(el, maxH, maxW) {
@@ -65,7 +65,7 @@ function fitTextSize(el, maxH, maxW) {
   while (lo < hi) {
     const mid = Math.ceil((lo + hi) / 2);
     const m = measureText(el, mid);
-    if (m.h <= maxH && (!maxW || m.w <= maxW)) lo = mid; else hi = mid - 1;
+    if (m.emH <= maxH && (!maxW || m.w <= maxW)) lo = mid; else hi = mid - 1;   // fit the em box (descenders safe); centre on glyphs
   }
   return lo;
 }
