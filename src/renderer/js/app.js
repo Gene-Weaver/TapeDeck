@@ -308,7 +308,7 @@ function fitDesignerZoom() {
   if (S.designer.manualZoom) return;
   const w = measureLabelWidth(layout, sampleValue(), S.tapeMm);
   const avail = Math.max(200, $('dzStage').clientWidth - 48 - 60);
-  const z = Math.max(2, Math.min(12, Math.floor(avail / Math.max(1, w))));
+  const z = Math.max(1, Math.min(12, Math.floor((avail / Math.max(1, w)) * 2) / 2));
   if (z !== designer.zoom) { designer.zoom = S.designer.zoom = z; $('dzZoom').value = z; }
 }
 $('dzStage').addEventListener('dblclick', () => { S.designer.manualZoom = false; fitDesignerZoom(); designer.render(); });
