@@ -3,6 +3,7 @@
 const { fakeStatus } = require('./status');
 
 const VENDOR_ID = 0x04f9, PRODUCT_ID = 0x2061;   // PT-P700 with P-Lite off
+const PLITE_PRODUCT_ID = 0x2064;                  // the same printer with P-Lite on (acts as a USB drive)
 const NOT_FOUND = 'PT-P700 not found on USB. Check the cable, that the printer is on, and that the green P-Lite light is OFF (hold the P-Lite button ~2 s to switch modes).';
 
 class TransportError extends Error {}
@@ -16,7 +17,10 @@ class UsbTransport {
     if (typeof findByIds !== 'function') throw new TransportError('Incompatible usb module: findByIds missing (need node-usb 2.x).');
     this.usb = usb; this.timeoutMs = timeoutMs;
     const dev = findByIds(VENDOR_ID, PRODUCT_ID);
-    if (!dev) throw new TransportError(NOT_FOUND);
+    if (!dev) {
+      if (findByIds(VENDOR_ID, PLITE_PRODUCT_ID)) throw new TransportError('PT-P700 found, but it is in P-Lite mode (green P-Lite light on). Hold the P-Lite button for about 2 seconds until the light turns off, then try again.');
+      throw new TransportError(NOT_FOUND);
+    }
     try { dev.open(); } catch (e) { throw new TransportError(accessHint(e)); }
     this.dev = dev;
     try {
@@ -95,4 +99,4 @@ class MockTransport {
 }
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-module.exports = { UsbTransport, MockTransport, TransportError, VENDOR_ID, PRODUCT_ID };
+module.exports = { UsbTransport, MockTransport, TransportError, VENDOR_ID, PRODUCT_ID, PLITE_PRODUCT_ID };
