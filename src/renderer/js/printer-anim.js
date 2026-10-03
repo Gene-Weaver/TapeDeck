@@ -8,15 +8,14 @@ const norm = (x, y) => { const l = Math.hypot(x, y); return [x / l, y / l]; };
 const D = norm(0.93, 0.37);        // depth axis: back -> front, toward the viewer (down-right on screen)
 const Wv = norm(0.93, -0.36);      // width axis: left -> right across the front (up-right on screen)
 const V = [0, 1];                  // height axis: top -> bottom
-const DIM = { d: 180, w: 92, h: 168 };          // body proportions (152 × 78 × 143 mm), height exaggerated a touch for the low camera
-const ORIGIN = [92, 70];                         // top-back-left corner on screen
+const DIM = { d: 270, w: 138, h: 252 };         // body proportions (152 × 78 × 143 mm), height exaggerated a touch for the low camera
+const ORIGIN = [56, 58];                         // top-back-left corner on screen
 const P = (d, w, h) => [ORIGIN[0] + d * D[0] + w * Wv[0] + h * V[0], ORIGIN[1] + d * D[1] + w * Wv[1] + h * V[1]];
-const SLOT = { w: 0.5, h: 0.56 };               // slot centre as fractions of the front face (width, height)
+const SLOT = { w: 0.5, h: 0.50 };               // slot centre as fractions of the front face (width, height)
 const EXIT = P(DIM.d, DIM.w * SLOT.w, DIM.h * SLOT.h);   // screen point where the tape leaves the printer
-const PATH = { flat: 18, bend: 70 };            // px along the tape path: flat, then curl up to face the viewer
+const PATH = { flat: 24, bend: 80 };            // px along the tape path: flat, then curl up to face the viewer
 const SLICE = 6;                                // px per tape slice
-const BIN = { x: 480, y: 180, w: 410, h: 132 }; // translucent bin (front wall), scene coordinates
-const BIN_DEPTH = [26, -18];                    // oblique offset of the bin's back wall
+const BIN = { x: 500, y: 236, w: 390, h: 160 }; // translucent tray, scene coordinates
 
 /** Position and orientation of the tape at arc length s from the slot. Returns { x, y, tx, ty, ux, uy }:
  *  (tx,ty) is the tangent (label x axis), (ux,uy) the "up" direction of the label (toward its top edge). */
@@ -53,8 +52,7 @@ export class PrintTheater {
     this.btnCancel = root.querySelector('#thCancel');
     this.btnClose = root.querySelector('#thClose');
     this.btnFeedCut = root.querySelector('#thFeedCut');
-    this.soundChk = root.querySelector('#thSound');
-    this.svg.setAttribute('viewBox', '0 0 920 330'); this.svg.setAttribute('width', '920'); this.svg.setAttribute('height', '330');
+    this.svg.setAttribute('viewBox', '0 0 920 420'); this.svg.setAttribute('width', '920'); this.svg.setAttribute('height', '420');
     // bin: back wall behind the pile, front wall in front of it
     this.binBack = document.createElement('div'); this.binBack.className = 'bin bin-back';
     this.binFront = document.createElement('div'); this.binFront.className = 'bin bin-front';
@@ -69,7 +67,6 @@ export class PrintTheater {
     this.spark.style.left = `${EXIT[0] - 4}px`; this.spark.style.top = `${EXIT[1] - 5}px`;
     this.labelOut.style.left = '0px'; this.labelOut.style.top = '0px'; this.labelOut.style.width = '0'; this.labelOut.style.height = '0'; this.labelOut.style.transform = 'none';
     this.queue = Promise.resolve();
-    this.audio = null;
   }
 
   // ---- the printer ----------------------------------------------------------------------
@@ -79,8 +76,8 @@ export class PrintTheater {
     const poly = (...pts) => 'M' + pts.map(pt).join(' L') + ' Z';
     const m = (xb, yb, o) => `matrix(${xb[0]} ${xb[1]} ${yb[0]} ${yb[1]} ${o[0]} ${o[1]})`;   // plane transform
     const topM = m(D, Wv, P(0, 0, 0)), frontM = m(Wv, V, P(d, 0, 0)), sideM = m(D, V, P(0, 0, 0));
-    const slotW = tapePx + 10, slotH = 7;
-    const panelTop = 0, panelH = h * 0.70;
+    const slotW = tapePx + 14, slotH = 9;
+    const panelTop = 0, panelH = h * 0.74;
     this.svg.innerHTML = `
       <defs>
         <pattern id="dots" width="3.2" height="3.2" patternUnits="userSpaceOnUse" patternTransform="${topM}"><rect width="3.2" height="3.2" fill="#17191d"/><circle cx="1.6" cy="1.6" r="0.75" fill="#30333a"/></pattern>
@@ -94,37 +91,29 @@ export class PrintTheater {
         <!-- long white side (left) -->
         <path d="${poly(P(0, 0, 0), P(d, 0, 0), P(d, 0, h), P(0, 0, h))}" fill="url(#gSide)" stroke="#c4c9d2"/>
         <g transform="${sideM}">
-          <rect x="${d * 0.30}" y="${h * 0.50}" width="30" height="24" rx="5" fill="#1b1e24" stroke="#3a3e46"/>
-          <text x="${d * 0.30 + 15}" y="${h * 0.50 + 16}" text-anchor="middle" font-size="10.5" font-weight="700" font-family="Helvetica, Arial" fill="#e8eaf0">${tapeLabel || ''}</text>
-          <text x="${d * 0.30 + 33}" y="${h * 0.50 + 36}" font-size="5" font-family="Helvetica, Arial" fill="#9aa1ad">TZe</text>
+          <rect x="${d * 0.30}" y="${h * 0.52}" width="44" height="34" rx="7" fill="#1b1e24" stroke="#3a3e46"/>
+          <text x="${d * 0.30 + 22}" y="${h * 0.52 + 22}" text-anchor="middle" font-size="14" font-weight="700" font-family="Helvetica, Arial" fill="#e8eaf0">${tapeLabel || ''}</text>
         </g>
         <!-- front face -->
         <path d="${poly(P(d, 0, 0), P(d, w, 0), P(d, w, h), P(d, 0, h))}" fill="url(#gFront)" stroke="#c4c9d2"/>
         <g transform="${frontM}">
           <rect x="${w * 0.12}" y="${panelTop}" width="${w * 0.88}" height="${panelH}" rx="7" fill="url(#gPanel)"/>
-          <text x="${w * 0.56}" y="${h * 0.17}" text-anchor="middle" font-size="12.5" font-family="Helvetica, Arial" font-weight="700" fill="#f2f3f5">brother</text>
+          <text x="${w * 0.56}" y="${h * 0.14}" text-anchor="middle" font-size="17" font-family="Helvetica, Arial" font-weight="700" fill="#f2f3f5">brother</text>
           <rect x="${w * SLOT.w - slotW / 2}" y="${h * SLOT.h - slotH / 2}" width="${slotW}" height="${slotH}" rx="2.5" fill="#000"/>
           <rect x="${w * SLOT.w - slotW / 2 + 2}" y="${h * SLOT.h - slotH / 2 + 2}" width="${slotW - 4}" height="${slotH - 4}" rx="1.5" fill="#1d2026"/>
-          <text x="${w * 0.20}" y="${h * 0.86}" font-size="8.5" font-style="italic" font-family="Georgia, serif" fill="#8b93a3">P-touch</text>
+          <text x="${w * 0.56}" y="${h * 0.69}" text-anchor="middle" font-size="12" font-style="italic" font-family="'Snell Roundhand', 'Brush Script MT', Georgia, serif" fill="#e8eaf0">P-touch</text>
+          <text x="${w * 0.56}" y="${h * 0.735}" text-anchor="middle" font-size="6.5" font-family="Helvetica, Arial" fill="#9aa1ad">P700</text>
           <line x1="${w * 0.5}" y1="${panelH + 2}" x2="${w * 0.5}" y2="${h}" stroke="#b9bfc9" stroke-width="1.2"/>
           <line x1="0" y1="${h * 0.94}" x2="${w}" y2="${h * 0.94}" stroke="#c4c9d2" stroke-width=".8"/>
         </g>
         <!-- black dotted top with the three buttons: cut, P-Lite, power -->
         <path d="${poly(P(0, 0, 0), P(0, w, 0), P(d, w, 0), P(d, 0, 0))}" fill="url(#dots)" stroke="#34373e" stroke-width="1.5"/>
         <g transform="${topM}" font-family="Helvetica, Arial" fill="#d4d8df" text-anchor="middle">
-          <circle cx="${d * 0.46}" cy="${w * 0.66}" r="10" fill="#2b2e35" stroke="#4a4e57"/><text x="${d * 0.46}" y="${w * 0.66 + 3.5}" font-size="9" transform="rotate(-28 ${d * 0.46} ${w * 0.66})">✂</text>
-          <circle cx="${d * 0.70}" cy="${w * 0.72}" r="10" fill="#2b2e35" stroke="#4a4e57"/><text x="${d * 0.70}" y="${w * 0.72 + 3.5}" font-size="8" font-weight="700" transform="rotate(-28 ${d * 0.70} ${w * 0.72})">P</text>
-          <circle cx="${d * 0.84}" cy="${w * 0.78}" r="10" fill="#2b2e35" stroke="#4a4e57"/><text x="${d * 0.84}" y="${w * 0.78 + 3.5}" font-size="9" transform="rotate(-28 ${d * 0.84} ${w * 0.78})">⏻</text>
-          <circle class="led-power" cx="${d * 0.92}" cy="${w * 0.66}" r="2.2" fill="#3dff7a"/>
+          <circle cx="${d * 0.80}" cy="${w * 0.22}" r="13" fill="#2b2e35" stroke="#4a4e57"/><text x="${d * 0.80}" y="${w * 0.22 + 4}" font-size="11">✂</text>
+          <circle cx="${d * 0.80}" cy="${w * 0.52}" r="13" fill="#2b2e35" stroke="#4a4e57"/><text x="${d * 0.80}" y="${w * 0.52 + 4}" font-size="10" font-weight="700">P</text>
+          <circle cx="${d * 0.80}" cy="${w * 0.78}" r="13" fill="#2b2e35" stroke="#4a4e57"/><text x="${d * 0.80}" y="${w * 0.78 + 4}" font-size="11">⏻</text>
+          <circle class="led-power" cx="${d * 0.90}" cy="${w * 0.78}" r="2.6" fill="#3dff7a"/>
         </g>
-      </g>
-      <!-- the bin: back wall, left wall and floor (its front wall is an HTML layer above the pile) -->
-      <g fill="rgba(170,195,235,.10)" stroke="rgba(200,215,245,.35)" stroke-linejoin="round">
-        ${(() => { const [bx, by] = BIN_DEPTH, x = BIN.x, y = BIN.y, w = BIN.w, h = BIN.h; return `
-        <path d="M${x + bx} ${y + by} h${w} v${h} h${-w} Z"/>
-        <path d="M${x} ${y} L${x + bx} ${y + by} L${x + bx} ${y + by + h} L${x} ${y + h} Z" fill="rgba(170,195,235,.16)"/>
-        <path d="M${x} ${y + h} L${x + bx} ${y + by + h} L${x + w + bx} ${y + by + h} L${x + w} ${y + h} Z" fill="rgba(170,195,235,.22)"/>
-        <path d="M${x + w} ${y} L${x + w + bx} ${y + by} L${x + w + bx} ${y + by + h} L${x + w} ${y + h} Z" fill="rgba(170,195,235,.08)"/>`; })()}
       </g>`;
   }
 
@@ -134,7 +123,7 @@ export class PrintTheater {
     const pins = labels[0]?.height || 32;
     const longest = Math.max(...labels.map(l => l.width));
     const pathAvail = (BIN.x + BIN.w - 10) - EXIT[0] - PATH.flat - PATH.bend * 0.6;
-    this.labelScale = Math.max(0.3, Math.min(1.5, 62 / pins, pathAvail / longest));
+    this.labelScale = Math.max(0.3, Math.min(1.6, 70 / pins, pathAvail / longest));
     this.drawPrinter(tapeLabel, Math.round(pins * this.labelScale));
     this.blade.style.top = `${EXIT[1] - (pins * this.labelScale) / 2 - 40}px`;
     this.pile.innerHTML = ''; this.labelOut.innerHTML = ''; this.list.innerHTML = '';
@@ -148,7 +137,7 @@ export class PrintTheater {
     labels.forEach((l, i) => { const s = document.createElement('span'); s.textContent = l.name || `#${i + 1}`; s.dataset.i = i; this.list.appendChild(s); });
   }
 
-  close() { this.root.classList.add('hidden'); this.scene.classList.remove('printing'); this._hum(false); if (this.raf) cancelAnimationFrame(this.raf); }
+  close() { this.root.classList.add('hidden'); this.scene.classList.remove('printing'); if (this.raf) cancelAnimationFrame(this.raf); }
 
   update(job, { chain = false } = {}) {
     this.chain = chain;
@@ -162,7 +151,7 @@ export class PrintTheater {
     else if (job.state === 'cancelled') this.queue = this.queue.then(() => { this.status.textContent = `Cancelled after ${job.printed} label(s).`; this._finish(); });
   }
 
-  _finish() { this.scene.classList.remove('printing'); this._hum(false); this.btnCancel.classList.add('hidden'); this.btnClose.classList.remove('hidden'); this.title.textContent = 'Finished'; }
+  _finish() { this.scene.classList.remove('printing'); this.btnCancel.classList.add('hidden'); this.btnClose.classList.remove('hidden'); this.title.textContent = 'Finished'; }
 
   _ensure(i, done) {
     if (i >= this.labels.length) return;
@@ -204,7 +193,7 @@ export class PrintTheater {
 
   async _animateStart(i) {
     const label = this.labels[i];
-    this.scene.classList.add('printing'); this._hum(true);
+    this.scene.classList.add('printing');
     this.list.querySelectorAll('span').forEach(sp => sp.classList.toggle('cur', +sp.dataset.i === i));
     this.cur = this._buildSlices(label);
     const mm = dotsToMm(label.width) + 4;
@@ -226,10 +215,9 @@ export class PrintTheater {
     const label = this.labels[i];
     this.blade.classList.remove('snap'); void this.blade.offsetWidth; this.blade.classList.add('snap');
     this.spark.classList.remove('go'); void this.spark.offsetWidth; this.spark.classList.add('go');
-    this._click();
     await wait(180);
     // the cut label drops into the bin: one flat canvas, scaled to the bin, newest on top
-    const binInner = BIN.w - 36, s = Math.min(this.labelScale, binInner / label.width, 34 / label.height);
+    const binInner = BIN.w - 36, s = Math.min(this.labelScale, binInner / label.width, 40 / label.height);
     const p = document.createElement('canvas'); p.width = label.width; p.height = label.height; p.getContext('2d').drawImage(label.canvas, 0, 0);
     const count = this.pile.children.length;
     const lift = Math.min(BIN.h - 50, count * 2.4);
@@ -250,30 +238,6 @@ export class PrintTheater {
     await wait(200);
   }
 
-  // ---- sound ------------------------------------------------------------------------------
-  _ctx() {
-    if (!this.soundChk.checked) return null;
-    if (!this.audio) { try { this.audio = new (window.AudioContext || window.webkitAudioContext)(); } catch { return null; } }
-    if (this.audio.state === 'suspended') this.audio.resume();
-    return this.audio;
-  }
-  _hum(on) {
-    const a = this._ctx();
-    if (!on || !a) { if (this.humNode) { try { this.humNode.gain.gain.linearRampToValueAtTime(0, (this.audio?.currentTime || 0) + .1); setTimeout(() => this.humNode?.osc.stop(), 150); } catch {} this.humNode = null; } return; }
-    if (this.humNode) return;
-    const osc = a.createOscillator(), gain = a.createGain(), lfo = a.createOscillator(), lg = a.createGain();
-    osc.type = 'sawtooth'; osc.frequency.value = 95; gain.gain.value = 0.0; gain.gain.linearRampToValueAtTime(0.025, a.currentTime + .15);
-    lfo.frequency.value = 18; lg.gain.value = 12; lfo.connect(lg); lg.connect(osc.frequency);
-    osc.connect(gain); gain.connect(a.destination); osc.start(); lfo.start();
-    this.humNode = { osc, gain };
-  }
-  _click() {
-    const a = this._ctx(); if (!a) return;
-    const n = a.sampleRate * 0.06, buf = a.createBuffer(1, n, a.sampleRate), d = buf.getChannelData(0);
-    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 3);
-    const src = a.createBufferSource(), g = a.createGain(); g.gain.value = 0.35;
-    src.buffer = buf; src.connect(g); g.connect(a.destination); src.start();
-  }
 }
 
 const wait = (ms) => new Promise(r => setTimeout(r, ms));

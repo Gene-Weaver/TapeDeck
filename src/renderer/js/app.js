@@ -15,7 +15,7 @@ const DEFAULTS = {
   pattern: defaultPattern(),
   single: { text: 'Hello tape', copies: 1 },
   batch: { text: '', header: false, tpl: '' },
-  options: { autoCut: true, cutEach: 1, marginMm: 2, mirror: false, flip: false, check: true, sound: false, mock: false, mockTape: 6, offsetDots: 2 },
+  options: { autoCut: true, cutEach: 1, marginMm: 2, mirror: false, flip: false, check: true, mock: false, mockTape: 6, offsetDots: 2 },
   designer: { zoom: 6 },
 };
 let S = loadState();
@@ -282,7 +282,6 @@ $('zoom').addEventListener('input', () => { S.zoom = Number($('zoom').value); $(
 for (const [id, key, evt] of [['optAutoCut', 'autoCut', 'change'], ['optCutEach', 'cutEach'], ['optMarginMm', 'marginMm'], ['optOffset', 'offsetDots'], ['optMirror', 'mirror', 'change'], ['optFlip', 'flip', 'change'],
   ['optCheck', 'check', 'change'], ['optMock', 'mock', 'change'], ['optMockTape', 'mockTape', 'change']])
   bindInput(id, () => S.options[key], v => S.options[key] = v, evt || 'input', (id === 'optMarginMm') ? refreshPreview : (id === 'optMock' || id === 'optMockTape') ? pollStatus : () => {});
-$('thSound').checked = S.options.sound; $('thSound').addEventListener('change', () => { S.options.sound = $('thSound').checked; saveState(); });
 $('btnSettings').onclick = () => $('settings').classList.remove('hidden');
 $('settingsClose').onclick = () => $('settings').classList.add('hidden');
 $('settings').addEventListener('click', (e) => { if (e.target === $('settings')) $('settings').classList.add('hidden'); });

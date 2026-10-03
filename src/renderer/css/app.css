@@ -118,10 +118,8 @@ button.small { padding: 4px 9px; font-size: 12.5px; }
 .theater { position: fixed; inset: 0; background: rgba(8,9,12,.82); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: 50; }
 .theater-inner { width: min(960px, 96vw); max-height: 94vh; background: var(--bg2); border: 1px solid var(--line); border-radius: 16px; padding: 18px 22px; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 30px 80px rgba(0,0,0,.6); }
 .theater-head { display: flex; align-items: center; justify-content: space-between; }
-.scene { position: relative; height: 330px; isolation: isolate; background: radial-gradient(ellipse at 50% 85%, #2a2f3a 0%, #171a20 70%); border-radius: 12px; overflow: hidden; }
+.scene { position: relative; height: 420px; isolation: isolate; background: radial-gradient(ellipse at 50% 85%, #2a2f3a 0%, #171a20 70%); border-radius: 12px; overflow: hidden; }
 .scene svg { position: absolute; left: 0; top: 0; }
-.scene.printing .body { animation: shake .12s linear infinite; }
-@keyframes shake { 0% { transform: translate(0,0);} 25% { transform: translate(.6px,-.4px);} 50% { transform: translate(-.5px,.5px);} 75% { transform: translate(.4px,.3px);} 100% { transform: translate(0,0);} }
 .scene .led-power { fill: #3dff7a; filter: drop-shadow(0 0 4px #3dff7a); }
 .scene.printing .led-power { animation: blink .5s steps(2) infinite; }
 @keyframes blink { to { opacity: .25; } }
@@ -137,8 +135,8 @@ button.small { padding: 4px 9px; font-size: 12.5px; }
 .pile { position: absolute; pointer-events: none; z-index: 1; }
 .pile canvas { position: absolute; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.6), 0 0 0 .5px rgba(0,0,0,.4); image-rendering: auto; transform: rotate(var(--rot, 0deg)); }
 .bin { position: absolute; border-radius: 6px; pointer-events: none; }
-.bin-back { display: none; }
-.bin-front { z-index: 2; border-radius: 3px; background: linear-gradient(180deg, rgba(220,235,255,.08), rgba(220,235,255,.20)); border: 1.5px solid rgba(210,225,250,.55); box-shadow: inset 0 0 0 1px rgba(255,255,255,.06); }
+.bin-back { z-index: 0; background: linear-gradient(180deg, rgba(160,190,230,.06), rgba(160,190,230,.14)); border: 1px solid rgba(190,210,240,.28); box-shadow: inset 0 -30px 40px rgba(120,150,200,.08); }
+.bin-front { z-index: 2; background: linear-gradient(180deg, rgba(220,235,255,.10), rgba(220,235,255,.22)); border: 1.5px solid rgba(210,225,250,.55); box-shadow: inset 0 0 0 1px rgba(255,255,255,.08), 0 10px 24px rgba(0,0,0,.35); }
 .bin-front::after { content: ''; position: absolute; left: 10px; top: 8px; width: 38%; height: 55%; background: linear-gradient(115deg, rgba(255,255,255,.22), rgba(255,255,255,0) 60%); border-radius: 4px; }
 .bin-label { position: absolute; right: 10px; bottom: 6px; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: rgba(220,230,250,.55); }
 .progress { height: 8px; background: var(--bg3); border-radius: 999px; overflow: hidden; }
