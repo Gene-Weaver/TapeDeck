@@ -16,7 +16,7 @@ const DEFAULTS = {
   pattern: { kind: 'counter', prefix: 'LEAF-', suffix: '', start: 1, end: 20, step: 1, pad: 4, tpl: 'LEAF-{n:06}', tStart: 1, tCount: 20, tStep: 1 },
   batch: { text: '', header: false, tpl: '' },
   style: { font: 'Helvetica', bold: false, italic: false, invert: false, auto: true, size: 22, align: 'center', border: false, lenMode: 'auto', lenMm: 30, padMm: 1 },
-  options: { autoCut: true, cutEach: 1, marginMm: 2, mirror: false, flip: false, check: true, sound: false, mock: false, mockTape: 6, leader: 'trim' },
+  options: { autoCut: true, cutEach: 1, marginMm: 2, mirror: false, flip: false, check: true, sound: false, mock: false, mockTape: 6, leader: 'chain' },
   designer: { sampleText: 'LEAF-000042', sampleN: 42, zoom: 6 },
 };
 let S = loadState();
@@ -118,7 +118,7 @@ const refreshPreview = debounce(async () => {
   const H = t.pins, hCss = H * cpd;
   const frag = document.createDocumentFragment();
   let total = 0;
-  const leader = S.options.leader || 'trim', leaderDots = mmToDots(LEADER_MM);
+  const leader = S.options.leader || 'chain', leaderDots = mmToDots(LEADER_MM);
   if (values.length && leader !== 'chain') {
     const chip = leaderDots + 2 * marginDots; total += chip;
     const el = document.createElement('div'); el.className = 'lab waste'; el.style.width = `${chip * cpd}px`;
@@ -175,7 +175,7 @@ function printBody(labels) {
   const o = S.options;
   return { tapeMm: S.tapeMm, labels: labels.map(l => ({ pixels: canvasToPixels(l.canvas), width: l.width, height: l.height, name: l.name })),
     autoCut: o.autoCut, cutEach: Number(o.cutEach) || 1, mirror: o.mirror, marginDots: Math.max(14, mmToDots(o.marginMm)),
-    flip: o.flip, checkMedia: o.check, mock: o.mock, mockTape: Number(o.mockTape) || 6, leader: o.leader || 'trim' };
+    flip: o.flip, checkMedia: o.check, mock: o.mock, mockTape: Number(o.mockTape) || 6, leader: o.leader || 'chain' };
 }
 
 // ---------------------------------------------------------------- print flow
@@ -193,10 +193,18 @@ async function doPrint() {
     theater.update({ state: 'error', error: (e.message || String(e)).replace(/^Error invoking remote method 'print': Error: /, ''), printed: 0, index: 0, phase: '' }); return;
   }
   currentJob = job.id;
-  theater.update(job);
+  theater.update(job, { chain: (S.options.leader || 'chain') === 'chain' });
 }
-api.onJobProgress((j) => { if (j.id === currentJob) { theater.update(j); if (j.state !== 'printing' && j.state !== 'queued') currentJob = null; } });
+api.onJobProgress((j) => { if (j.id === currentJob) { theater.update(j, { chain: (S.options.leader || 'chain') === 'chain' }); if (j.state !== 'printing' && j.state !== 'queued') currentJob = null; } });
 $('thClose').onclick = () => theater.close();
+async function doFeedCut(btn) {
+  const o = S.options; btn && (btn.disabled = true);
+  try { await api.feedAndCut({ tapeMm: S.tapeMm, mock: o.mock, mockTape: Number(o.mockTape) || 6 }); toast('Fed and cut.'); }
+  catch (e) { toast((e.message || String(e)).replace(/^Error invoking remote method '[^']+': Error: /, ''), true, 6000); }
+  finally { btn && (btn.disabled = false); }
+}
+$('btnFeedCut').onclick = () => doFeedCut($('btnFeedCut'));
+$('thFeedCut').onclick = () => doFeedCut($('thFeedCut'));
 $('btnPrint').onclick = doPrint;
 $('btnExport').onclick = async () => {
   if (!values.length) return;

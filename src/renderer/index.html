@@ -156,6 +156,7 @@ Betula papyrifera"></textarea></label>
     <label class="check" title="Render Single/Pattern/Batch values through the Designer layout"><input type="checkbox" id="useDesigner"> Use Designer layout</label>
     <span class="spacer"></span>
     <button id="btnExport" title="Save every label as a PNG to a folder you choose">Export PNGs</button>
+    <button id="btnFeedCut" title="Feed the tape to the cutter and cut: releases the last label held inside the printer">Feed &amp; cut</button>
     <button id="btnPrint" class="primary">Print</button>
   </div>
   <div class="strip-wrap">
@@ -171,6 +172,7 @@ Betula papyrifera"></textarea></label>
       <div class="row">
         <label class="check"><input type="checkbox" id="thSound"> Sound</label>
         <button id="thCancel">Cancel job</button>
+        <button id="thFeedCut" class="hidden">Feed &amp; cut</button>
         <button id="thClose" class="hidden">Close</button>
       </div>
     </div>
@@ -194,8 +196,8 @@ Betula papyrifera"></textarea></label>
     <label class="field"><span>Feed margin (mm each side, min 2.0)</span><input type="number" id="optMarginMm" value="2" min="2" max="30" step="0.5"></label>
     <label class="field"><span>Tape leader <small>(the ~24.5 mm between print head and cutter)</small></span>
       <select id="optLeader">
-        <option value="trim">Normal: the printer cuts it off as a blank chip before the first label</option>
-        <option value="chain">Chain: don't cut the last label; the next job releases it (no chip, no waste)</option>
+        <option value="chain">Chain printing: never feed blank tape; the last label is released by the next job or Feed &amp; cut</option>
+        <option value="trim">Feed and cut after every job (the printer ejects a blank leader piece first)</option>
       </select></label>
     <label class="check"><input type="checkbox" id="optMirror"> Mirror print (for clear tape behind glass)</label>
     <label class="check"><input type="checkbox" id="optFlip"> Flip pin order <small>(tick if a test print comes out upside-down)</small></label>

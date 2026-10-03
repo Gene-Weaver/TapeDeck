@@ -19,6 +19,7 @@ export class PrintTheater {
     this.sub = root.querySelector('#thSub');
     this.btnCancel = root.querySelector('#thCancel');
     this.btnClose = root.querySelector('#thClose');
+    this.btnFeedCut = root.querySelector('#thFeedCut');
     this.soundChk = root.querySelector('#thSound');
     this.blade = document.createElement('div'); this.blade.className = 'blade'; this.scene.appendChild(this.blade);
     this.spark = document.createElement('div'); this.spark.className = 'spark'; this.scene.appendChild(this.spark);
@@ -74,7 +75,7 @@ export class PrintTheater {
     this.status.textContent = 'Sending job…'; this.status.classList.remove('err');
     this.bar.style.width = '0%';
     this.title.textContent = 'Printing'; this.sub.textContent = `${labels.length} label${labels.length === 1 ? '' : 's'} on ${tapeLabel}`;
-    this.btnCancel.classList.remove('hidden'); this.btnClose.classList.add('hidden');
+    this.btnCancel.classList.remove('hidden'); this.btnClose.classList.add('hidden'); this.btnFeedCut.classList.add('hidden');
     this.btnCancel.onclick = onCancel;
     this.root.classList.remove('hidden');
     this.started = new Set(); this.cut = new Set(); this.queue = Promise.resolve();
@@ -85,7 +86,8 @@ export class PrintTheater {
   close() { this.root.classList.add('hidden'); this.scene.classList.remove('printing'); this._hum(false); }
 
   /** Feed job progress from the server poll. */
-  update(job) {
+  update(job, { chain = false } = {}) {
+    this.chain = chain;
     const n = this.labels.length;
     for (let i = 0; i < job.printed; i++) this._ensure(i, true);
     if ((job.phase === 'sending' || job.phase === 'printing') && job.state === 'printing') this._ensure(job.index, false);
@@ -94,7 +96,13 @@ export class PrintTheater {
       const cur = this.labels[job.index];
       this.status.textContent = `Label ${job.index + 1} / ${n}  ·  ${cur ? cur.name : ''}  ·  ${job.phase}`;
     } else if (job.state === 'done') {
-      this.queue = this.queue.then(() => { this.status.textContent = `Done. ${job.printed} label${job.printed === 1 ? '' : 's'} printed and cut.`; this._finish(); });
+      this.queue = this.queue.then(() => {
+        this.status.textContent = this.chain
+          ? `Done. ${job.printed} label${job.printed === 1 ? '' : 's'} printed. The last one is still inside the printer (chain printing): it comes out with your next print, or press Feed & cut.`
+          : `Done. ${job.printed} label${job.printed === 1 ? '' : 's'} printed and cut.`;
+        this._finish();
+        if (this.chain) this.btnFeedCut.classList.remove('hidden');
+      });
     } else if (job.state === 'error') {
       this.queue = this.queue.then(() => { this.status.textContent = `Error: ${job.error}`; this.status.classList.add('err'); this._finish(); });
     } else if (job.state === 'cancelled') {
@@ -111,7 +119,8 @@ export class PrintTheater {
   _ensure(i, done) {
     if (i >= this.labels.length) return;
     if (!this.started.has(i)) { this.started.add(i); this.queue = this.queue.then(() => this._animateStart(i)); }
-    if (done && !this.cut.has(i)) { this.cut.add(i); this.queue = this.queue.then(() => this._animateCut(i)); }
+    const isLast = i === this.labels.length - 1;
+    if (done && !this.cut.has(i) && !(this.chain && isLast)) { this.cut.add(i); this.queue = this.queue.then(() => this._animateCut(i)); }
   }
 
   _scaleFor(label) {

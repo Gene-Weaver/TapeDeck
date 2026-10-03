@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('tapedeck', {
   print: (body) => ipcRenderer.invoke('print', body),
   job: (id) => ipcRenderer.invoke('job', id),
   cancel: (id) => ipcRenderer.invoke('cancel', id),
+  feedAndCut: (body) => ipcRenderer.invoke('feed-cut', body),
   exportPngs: (body) => ipcRenderer.invoke('export', body),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   openPath: (p) => ipcRenderer.invoke('open-path', p),

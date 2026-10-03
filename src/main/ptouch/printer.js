@@ -24,8 +24,13 @@ class Printer {
 
   /**
    * pages: [{ width, height, pixels: Uint8Array }] with height == tape pins.
-   * options: { tapeMm, autoCut, cutEach, mirror, marginDots, flip, checkMedia }
+   * options: { tapeMm, autoCut, cutEach, mirror, marginDots, flip, checkMedia, chain }
    * progress(i, total, phase) phase in sending | printing | done. cancel() -> bool.
+   *
+   * Pages are STREAMED back to back. The printer buffers them and prints continuously, cutting
+   * between labels without feeding blank tape; waiting for each page to finish before sending
+   * the next makes the printer feed every label out to the cutter first and wastes ~25 mm each.
+   * Completion is tracked from the printer's "printing completed" notifications.
    */
   async printPages(pages, options, progress, cancel) {
     if (!pages.length) return 0;
@@ -40,39 +45,59 @@ class Printer {
     }
     const rasterPages = pages.map(p => P.pixelsToRasterLines(p.pixels, p.width, p.height, tape, !!options.flip));
     const chunks = P.buildJob(rasterPages, tape, { autoCut: options.autoCut !== false, cutEach: options.cutEach || 1, mirror: !!options.mirror, marginDots: options.marginDots ?? 14, mediaType, chain: !!options.chain });
-    await this.t.write(chunks[0]);
-    const total = pages.length; let printed = 0;
-    for (let i = 0; i < total; i++) {
-      if (cancel && cancel()) break;
-      progress && progress(i, total, 'sending');
-      await this.t.write(chunks[i + 1]);
-      progress && progress(i, total, 'printing');
-      await this._waitPageDone();
-      printed++;
-      progress && progress(i, total, 'done');
+    const total = pages.length;
+    let sent = 0, done = 0, readerErr = null, active = true, lastActivity = Date.now();
+    const reader = (async () => {
+      while (active) {
+        let buf;
+        try { buf = await this.t.read(32, 500); } catch (e) { readerErr = e; break; }
+        if (!buf.length) { await new Promise(r => setTimeout(r, 25)); continue; }   // yield (mock reads return instantly)
+        if (buf.length >= 32 && buf[0] === 0x80) {
+          lastActivity = Date.now();
+          let st; try { st = parseStatus(buf); } catch { continue; }
+          if (st.errors.length) { readerErr = new PrintError('Printer error during job: ' + st.errors.join(', ')); break; }
+          if (st.statusTypeCode === 0x01 && done < total) { done++; progress && progress(done - 1, total, 'done'); }
+        }
+      }
+    })();
+    try {
+      await this.t.write(chunks[0]);
+      for (let i = 0; i < total; i++) {
+        if (readerErr) throw readerErr;
+        if (cancel && cancel()) break;
+        progress && progress(i, total, 'sending');
+        await this.t.write(chunks[i + 1]);
+        sent++; lastActivity = Date.now();
+        progress && progress(i, total, 'printing');
+      }
+      // wait for the printer to report every sent page, with a generous per-page budget
+      const deadline = Date.now() + 15000 + sent * 20000;
+      while (done < sent && Date.now() < deadline) {
+        if (readerErr) throw readerErr;
+        if (Date.now() - lastActivity > 12000) break;      // printer went quiet: assume the rest printed
+        await new Promise(r => setTimeout(r, 100));
+      }
+      if (readerErr) throw readerErr;
+      if (done < sent) { for (let i = done; i < sent; i++) progress && progress(i, total, 'done'); done = sent; }
+      return sent;
+    } finally {
+      active = false;
+      await reader.catch(() => {});
     }
-    return printed;
   }
 
-  /** Watch status notifications until the page finishes (0x01) or the printer returns to editing phase. */
-  async _waitPageDone(timeoutMs = 60000) {
-    const deadline = Date.now() + timeoutMs;
-    let sawAny = false;
+  /** Feed the tape to the cutter and cut, releasing a label left inside by chain printing. */
+  async feedAndCut(tapeMm) {
+    const st = await this.status();
+    if (st.errors.length) throw new PrintError('Printer reports: ' + st.errors.join(', '));
+    const tape = tapeForMm(st.hasMedia ? st.mediaWidthMm : tapeMm);
+    await this.t.write(P.buildFeedAndCut(tape, { mediaType: st.mediaTypeCode, marginDots: 14 }));
+    const deadline = Date.now() + 10000;
     while (Date.now() < deadline) {
-      const buf = await this.t.read(32, 1000);
-      if (buf.length >= 32 && buf[0] === 0x80) {
-        sawAny = true;
-        const st = parseStatus(buf);
-        if (st.errors.length) throw new PrintError('Printer error during job: ' + st.errors.join(', '));
-        if (st.statusTypeCode === 0x01) { await this._drain(); return; }
-        if (st.statusTypeCode === 0x06 && st.phaseType === 0x00) return;
-      } else return;   // nothing (more) to read: assume the page went through
+      const buf = await this.t.read(32, 500);
+      if (buf.length >= 32 && buf[0] === 0x80) { const s2 = parseStatus(buf); if (s2.errors.length) throw new PrintError(s2.errors.join(', ')); if (s2.statusTypeCode === 0x01) break; }
+      else { if (Date.now() - deadline > -7000) break; await new Promise(r => setTimeout(r, 50)); }
     }
-    void sawAny;
-  }
-  async _drain(ms = 200) {
-    const deadline = Date.now() + ms;
-    while (Date.now() < deadline) { const b = await this.t.read(32, 100); if (!b.length) break; }
   }
 }
 

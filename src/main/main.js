@@ -77,6 +77,7 @@ ipcMain.handle('print', (e, body) => {
   return jobs.start({ pages, names, options, mock: !!body.mock, mockTape: body.mockTape }, (job) => { if (!wc.isDestroyed()) wc.send('job-progress', job); });
 });
 ipcMain.handle('job', (_e, id) => jobs.get(id));
+ipcMain.handle('feed-cut', (_e, body) => jobs.feedAndCut(body || {}));
 ipcMain.handle('cancel', (_e, id) => jobs.cancel(id));
 
 ipcMain.handle('export', async (_e, { labels, suggestedName }) => {

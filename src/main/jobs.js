@@ -31,6 +31,14 @@ class JobManager {
     })();
     return publicJob(job);
   }
+  /** Runs a feed-and-cut as a tiny job so it serializes with printing. */
+  async feedAndCut({ tapeMm, mock, mockTape }) {
+    if (this.current) throw new Error('A print job is already running');
+    const printer = mock ? Printer.mock({ tapeMm: mockTape || tapeMm }) : Printer.usb();
+    this.current = { id: 'feedcut' };
+    try { await printer.feedAndCut(tapeMm); } finally { this.current = null; try { await printer.t.close(); } catch {} }
+    return { ok: true };
+  }
   cancel(id) { const j = this.jobs.get(id); if (!j || !j._cancel) return false; j._cancel.v = true; return true; }
   get(id) { const j = this.jobs.get(id); return j ? publicJob(j) : null; }
 }

@@ -79,6 +79,31 @@ test('mock print end to end with progress', async () => {
   assert.equal(n, 3); assert.equal(t.pagesPrinted, 3); assert.ok(events.includes('2:done'));
 });
 
+test('streaming: all pages are written before the first completion is awaited', async () => {
+  const t = new MockTransport({ tapeMm: 6, realtime: false });
+  const order = [];
+  const origWrite = t.write.bind(t), origRead = t.read.bind(t);
+  t.write = async (d) => { order.push('w' + d.length); return origWrite(d); };
+  t.read = async (...a) => { const r = await origRead(...a); if (r.length) order.push('r'); return r; };
+  const tape = tapeForMm(6);
+  const pages = Array.from({ length: 3 }, () => ({ width: 20, height: tape.pins, pixels: new Uint8Array(20 * tape.pins).fill(1) }));
+  const n = await new Printer(t).printPages(pages, { tapeMm: 6, chain: true, checkMedia: false });
+  assert.equal(n, 3);
+  const writes = order.filter(x => x[0] === 'w');
+  assert.equal(writes.length, 4);                       // header + 3 pages, no interleaved waits
+  const lastChunk = t.written[t.written.length - 1];
+  assert.equal(lastChunk[lastChunk.length - 1], 0x0c);  // chain: last page ends with FF, not ^Z
+});
+
+test('feed and cut builds a one-line job that feeds and cuts', async () => {
+  const t = new MockTransport({ tapeMm: 12, realtime: false });
+  await new Printer(t).feedAndCut(6);
+  const all = Buffer.concat(t.written);
+  assert.equal(all[all.length - 1], 0x1a);
+  assert.ok(all.includes(Buffer.from([0x1b, 0x69, 0x4b, 0x08])));
+  assert.equal(t.pagesPrinted, 1);
+});
+
 test('mock rejects wrong tape', async () => {
   const p = new Printer(new MockTransport({ tapeMm: 12, realtime: false }));
   await assert.rejects(p.printPages([{ width: 5, height: 32, pixels: new Uint8Array(5 * 32) }], { tapeMm: 6 }), (e) => e instanceof PrintError && /12 mm/.test(e.message));

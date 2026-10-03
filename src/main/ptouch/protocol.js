@@ -105,6 +105,11 @@ function buildPage(lines, tape, first, last, opt) {
 // note: a page built with last=false ends in FF (print, wait for next page) which is also what chain printing needs
 const buildJobHeader = () => Buffer.concat([invalidate(), initialize(), switchToRasterMode()]);
 
+/** A job that prints nothing but feeds the tape to the cutter and cuts: releases a chained label. */
+function buildFeedAndCut(tape, opt = {}) {
+  return Buffer.concat([buildJobHeader(), buildPage([Buffer.alloc(RASTER_BYTES)], tape, true, true, { ...opt, autoCut: true, chain: false })]);
+}
+
 /** Head-to-cutter distance: the blank tape every job starts with unless the previous job was chained. */
 const LEADER_MM = 24.5;
 
@@ -123,4 +128,4 @@ function buildJob(pages, tape, opt = {}) {
   return chunks;
 }
 
-module.exports = { LEADER_MM, invalidate, initialize, statusRequest, switchToRasterMode, notifyMode, printInformation, variousMode, advancedMode, cutEvery, margin, compression, printPage, packBits, unpackBits, rasterLine, pixelsToRasterLines, buildPage, buildJobHeader, buildJob };
+module.exports = { LEADER_MM, buildFeedAndCut, invalidate, initialize, statusRequest, switchToRasterMode, notifyMode, printInformation, variousMode, advancedMode, cutEvery, margin, compression, printPage, packBits, unpackBits, rasterLine, pixelsToRasterLines, buildPage, buildJobHeader, buildJob };

@@ -8,6 +8,7 @@ export const api = {
   print: (body) => bridge.print(body),
   job: (id) => bridge.job(id),
   cancel: (id) => bridge.cancel(id),
+  feedAndCut: (body) => bridge.feedAndCut(body),
   exportPngs: (body) => bridge.exportPngs(body),
   openExternal: (url) => bridge.openExternal(url),
   openPath: (p) => bridge.openPath(p),
