@@ -24,7 +24,7 @@ class Printer {
 
   /**
    * pages: [{ width, height, pixels: Uint8Array }] with height == tape pins.
-   * options: { tapeMm, autoCut, cutEach, mirror, marginDots, flip, checkMedia, chain (default true), offsetDots }
+   * options: { tapeMm, autoCut, cutEach, mirror, marginDots, flip, checkMedia, chain (default false), offsetDots }
    * progress(i, total, phase) phase in sending | printing | done. cancel() -> bool.
    *
    * Pages are STREAMED back to back. The printer buffers them and prints continuously, cutting
@@ -44,7 +44,7 @@ class Printer {
       mediaType = st.mediaTypeCode;
     }
     const rasterPages = pages.map(p => P.pixelsToRasterLines(p.pixels, p.width, p.height, tape, !!options.flip));
-    const chunks = P.buildJob(rasterPages, tape, { autoCut: options.autoCut !== false, cutEach: options.cutEach || 1, mirror: !!options.mirror, marginDots: options.marginDots ?? 14, mediaType, chain: options.chain !== false });
+    const chunks = P.buildJob(rasterPages, tape, { autoCut: options.autoCut !== false, cutEach: options.cutEach || 1, mirror: !!options.mirror, marginDots: options.marginDots ?? 14, mediaType, chain: options.chain === true });
     const total = pages.length;
     let sent = 0, done = 0, readerErr = null, active = true, lastActivity = Date.now();
     const reader = (async () => {

@@ -149,7 +149,7 @@ const refreshPreview = debounce(async () => {
   if (values.length > shown) { const m = document.createElement('div'); m.className = 'more'; m.textContent = `… ${values.length - shown} more (all will print)`; strip.appendChild(m); }
   strip.querySelectorAll('.lab').forEach(el => io.observe(el));
   const secs = Math.round(dotsToMm(total) / FEED_MM_PER_S + values.length * 1.2);
-  stats.textContent = values.length ? `${values.length} label${values.length === 1 ? '' : 's'} · ${t.label} tape · ${fmtLen(total)} of tape · ≈ ${secs >= 60 ? `${Math.floor(secs / 60)} min ${secs % 60} s` : `${secs} s`} · ${usingDesigner() ? 'Designer layout' : 'simple text'}` : 'No labels yet';
+  stats.textContent = values.length ? `${values.length} label${values.length === 1 ? '' : 's'} · ${t.label} tape · ${fmtLen(total)} of tape (+ one blank lead piece per job) · ≈ ${secs >= 60 ? `${Math.floor(secs / 60)} min ${secs % 60} s` : `${secs} s`} · ${usingDesigner() ? 'Designer layout' : 'simple text'}` : 'No labels yet';
   $('btnPrint').textContent = values.length ? `Print ${values.length} label${values.length === 1 ? '' : 's'}` : 'Print';
   $('btnPrint').disabled = !values.length; $('btnExport').disabled = !values.length;
 }, 120);
@@ -187,9 +187,9 @@ async function doPrint() {
     theater.update({ state: 'error', error: (e.message || String(e)).replace(/^Error invoking remote method 'print': Error: /, ''), printed: 0, index: 0, phase: '' }); return;
   }
   currentJob = job.id;
-  theater.update(job, { chain: true });
+  theater.update(job, { chain: false });
 }
-api.onJobProgress((j) => { if (j.id === currentJob) { theater.update(j, { chain: true }); if (j.state !== 'printing' && j.state !== 'queued') currentJob = null; } });
+api.onJobProgress((j) => { if (j.id === currentJob) { theater.update(j, { chain: false }); if (j.state !== 'printing' && j.state !== 'queued') currentJob = null; } });
 $('thClose').onclick = () => theater.close();
 async function doFeedCut(btn) {
   const o = S.options; btn && (btn.disabled = true);

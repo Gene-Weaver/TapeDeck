@@ -112,13 +112,14 @@ function buildFeedAndCut(tape, opt = {}) {
 
 /**
  * pages: array of raster-line arrays. Returns [header, page1, page2, ...].
- * Chain printing is the default: the last page ends with FF, so the printer never feeds blank
- * tape after a job. The last label is released by the next job's cut or by buildFeedAndCut.
- * opt.chain=false ends the job with ^Z (feed and cut).
+ * The job ends with ^Z (feed and cut) so every label comes out. Labels within a job are cut
+ * between each other with no gap; the printer only trims one blank piece at the start of a job
+ * because the tape ahead of the head is empty after the previous cut. opt.chain=true instead
+ * ends with FF and leaves the last label inside for the next job (zero waste, delayed label).
  */
 function buildJob(pages, tape, opt = {}) {
   const chunks = [buildJobHeader()];
-  const chain = opt.chain !== false;
+  const chain = opt.chain === true;
   pages.forEach((lines, i) => chunks.push(buildPage(lines, tape, i === 0, i === pages.length - 1 && !chain, opt)));
   return chunks;
 }
