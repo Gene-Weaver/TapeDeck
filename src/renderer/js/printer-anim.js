@@ -1,9 +1,13 @@
 // The print theater: an animated PT-P700 that feeds, prints and cuts each label in sync with the job.
 import { dotsToMm, FEED_MM_PER_S } from './tape.js';
 
-const SVG_LEFT = 40, SVG_TOP = 20;          // where the SVG sits inside .scene (see app.css)
-const SLOT = { x: 372, y: 161, w: 12, h: 26 }; // tape exit slot in SVG coordinates (y = centre line, h set per tape)
-const MAX_LABEL_PX = 84;                     // tallest the emerging label is drawn
+const SVG_LEFT = 40, SVG_TOP = 10;          // where the SVG sits inside .scene (see app.css)
+// Three-quarter view: the narrow front face is a true rectangle on the right, the long white
+// side recedes to the upper-left (cabinet projection, slope 50/190).
+const FRONT = { x0: 330, x1: 430, y0: 118, y1: 292 };
+const SLOT = { x: 372, y: 212, w: 50 };     // exit slot on the front panel; y = centre line, height set per tape
+const EXIT_TILT = 9;                       // degrees: the label comes out toward the viewer
+const MAX_LABEL_PX = 84;
 
 export class PrintTheater {
   constructor(root) {
@@ -23,43 +27,57 @@ export class PrintTheater {
     this.soundChk = root.querySelector('#thSound');
     this.blade = document.createElement('div'); this.blade.className = 'blade'; this.scene.appendChild(this.blade);
     this.spark = document.createElement('div'); this.spark.className = 'spark'; this.scene.appendChild(this.spark);
-    this.blade.style.left = `${SVG_LEFT + SLOT.x + 2}px`;
-    this.spark.style.left = `${SVG_LEFT + SLOT.x + 1}px`;
+    this.blade.style.left = `${SVG_LEFT + SLOT.x + SLOT.w - 4}px`;
+    this.spark.style.left = `${SVG_LEFT + SLOT.x + SLOT.w - 5}px`;
+    this.labelOut.style.transformOrigin = 'left center';
+    this.labelOut.style.transform = `rotate(${EXIT_TILT}deg)`;
     this.queue = Promise.resolve();
     this.audio = null;
   }
 
   drawPrinter(tapeLabel, slotH = 26) {
     const sy = SLOT.y - slotH / 2;
+    const { x0, x1, y0, y1 } = FRONT;
+    const dx = -175, dy = -108;                                  // receding edge of the long side (seen from above)
+    const skew = Math.atan2(dy, dx) * 180 / Math.PI + 180;       // ~14.7°, used to draw on the side face
     this.svg.innerHTML = `
       <defs>
-        <linearGradient id="gBody" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#dfe3ea"/></linearGradient>
-        <linearGradient id="gTop" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#d9dde5"/><stop offset="1" stop-color="#c3c8d2"/></linearGradient>
-        <linearGradient id="gSide" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#b9bec9"/><stop offset="1" stop-color="#9aa0ac"/></linearGradient>
+        <pattern id="dots" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="4" height="4" fill="#15171b"/><circle cx="2" cy="2" r="0.9" fill="#32353c"/></pattern>
+        <linearGradient id="gSide" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#f7f8fa"/><stop offset="1" stop-color="#e4e7ec"/></linearGradient>
+        <linearGradient id="gFront" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#eceef2"/><stop offset="1" stop-color="#d9dde4"/></linearGradient>
+        <linearGradient id="gPanel" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a2d33"/><stop offset="1" stop-color="#121418"/></linearGradient>
       </defs>
-      <ellipse cx="250" cy="282" rx="190" ry="12" fill="rgba(0,0,0,.45)"/>
+      <ellipse cx="${(x0 + x1) / 2 + dx / 2}" cy="${y1 + 6}" rx="190" ry="14" fill="rgba(0,0,0,.45)"/>
       <g class="body">
-        <path d="M380 60 l26 -14 v212 l-26 14 z" fill="url(#gSide)"/>
-        <path d="M120 46 l26 -14 h260 l-26 14 z" fill="#eef0f4"/>
-        <rect x="120" y="46" width="260" height="226" rx="14" fill="url(#gBody)" stroke="#b7bcc7"/>
-        <rect x="134" y="58" width="232" height="54" rx="9" fill="url(#gTop)"/>
-        <circle cx="162" cy="84" r="10" fill="#f4f5f8" stroke="#a9afbb"/>
-        <path d="M162 78 v7 M157 81 a6 6 0 1 0 10 0" stroke="#5b6270" stroke-width="1.6" fill="none" stroke-linecap="round"/>
-        <circle class="led-power" cx="162" cy="103" r="2.6" fill="#3dff7a"/>
-        <circle cx="200" cy="84" r="10" fill="#f4f5f8" stroke="#a9afbb"/>
-        <text x="200" y="88" text-anchor="middle" font-size="9" font-family="Helvetica, Arial" font-weight="700" fill="#5b6270">P</text>
-        <circle cx="200" cy="103" r="2.6" fill="#4a5a4f"/>
-        <g transform="translate(290 62)">
-          <rect x="0" y="0" width="68" height="46" rx="6" fill="#1f232b" stroke="#6b7280"/>
-          <rect x="7" y="7" width="54" height="32" rx="4" fill="#2c313b" stroke="#4a5160"/>
-          <circle cx="22" cy="23" r="7" fill="#1f232b" stroke="#8b93a3"/><circle cx="46" cy="23" r="7" fill="#1f232b" stroke="#8b93a3"/>
-          <rect x="24" y="30" width="26" height="4" fill="#fafafa"/>
-          <text x="34" y="20" text-anchor="middle" font-size="7" font-family="Helvetica, Arial" fill="#c9ccd3">${tapeLabel || ''}</text>
+        <!-- long white side (receding) -->
+        <path d="M${x0} ${y0} L${x0 + dx} ${y0 + dy} L${x0 + dx} ${y1 + dy} L${x0} ${y1} Z" fill="url(#gSide)" stroke="#c9ced7"/>
+        <!-- tape-width badge on the side, drawn in the side face's plane -->
+        <g transform="translate(${x0 + dx + 60} ${y0 + dy + 150}) skewY(${skew.toFixed(2)})">
+          <rect x="0" y="0" width="54" height="40" rx="7" fill="#1d2026" stroke="#3a3e46"/>
+          <text x="27" y="26" text-anchor="middle" font-size="15" font-weight="700" font-family="Helvetica, Arial" fill="#e8eaf0">${tapeLabel || ''}</text>
         </g>
-        <rect x="134" y="124" width="232" height="134" rx="12" fill="#fbfcfd" stroke="#d6dae2"/>
-        <text x="152" y="246" font-size="12" font-family="Helvetica, Arial" font-weight="700" fill="#8b93a3" letter-spacing="1">PT-P700</text>
-        <rect x="${SLOT.x}" y="${sy}" width="${SLOT.w}" height="${slotH}" rx="3" fill="#15171c"/>
-        <rect x="${SLOT.x + 3}" y="${sy + 3}" width="6" height="${slotH - 6}" rx="2" fill="#2a2e37"/>
+        <!-- front face -->
+        <rect x="${x0}" y="${y0}" width="${x1 - x0}" height="${y1 - y0}" rx="6" fill="url(#gFront)" stroke="#c9ced7"/>
+        <!-- black front panel with logo and slot -->
+        <rect x="${x0 + 14}" y="${y0}" width="${x1 - x0 - 14}" height="${y1 - y0 - 60}" rx="8" fill="url(#gPanel)"/>
+        <text x="${x0 + 14 + (x1 - x0 - 14) / 2}" y="${y0 + 34}" text-anchor="middle" font-size="15" font-family="Helvetica, Arial" font-weight="700" letter-spacing=".3" fill="#f2f3f5">brother</text>
+        <rect x="${SLOT.x}" y="${sy}" width="${SLOT.w}" height="${slotH}" rx="3" fill="#000"/>
+        <rect x="${SLOT.x + 3}" y="${sy + 3}" width="${SLOT.w - 6}" height="${slotH - 6}" rx="2" fill="#1f2228"/>
+        <text x="${x0 + 22}" y="${y1 - 24}" font-size="12" font-style="italic" font-family="Georgia, serif" fill="#8b93a3">P-touch</text>
+        <line x1="${x0}" y1="${y1 - 12}" x2="${x1}" y2="${y1 - 12}" stroke="#c9ced7"/>
+        <!-- black dotted top -->
+        <path d="M${x0} ${y0} L${x1} ${y0} L${x1 + dx} ${y0 + dy} L${x0 + dx} ${y0 + dy} Z" fill="url(#dots)" stroke="#2a2d33"/>
+        <path d="M${x0} ${y0} L${x1} ${y0} L${x1 + dx} ${y0 + dy} L${x0 + dx} ${y0 + dy} Z" fill="none" stroke="#3a3e46" stroke-width="1.5"/>
+        <!-- three buttons along the top, near the front: feed/cut, P-Lite, power -->
+        <g font-family="Helvetica, Arial" font-size="9" fill="#cfd3da">
+          <ellipse cx="${x0 + 50 + dx * 0.62}" cy="${y0 + dy * 0.62}" rx="13" ry="8" fill="#2b2e35" stroke="#4a4e57"/>
+          <text x="${x0 + 50 + dx * 0.62}" y="${y0 + 3 + dy * 0.62}" text-anchor="middle" font-size="9">✂</text>
+          <ellipse cx="${x0 + 50 + dx * 0.40}" cy="${y0 + dy * 0.40}" rx="13" ry="8" fill="#2b2e35" stroke="#4a4e57"/>
+          <text x="${x0 + 50 + dx * 0.40}" y="${y0 + 3 + dy * 0.40}" text-anchor="middle" font-size="8" font-weight="700">P</text>
+          <ellipse cx="${x0 + 50 + dx * 0.20}" cy="${y0 + dy * 0.20}" rx="13" ry="8" fill="#2b2e35" stroke="#4a4e57"/>
+          <text x="${x0 + 50 + dx * 0.20}" y="${y0 + 3 + dy * 0.20}" text-anchor="middle" font-size="9">⏻</text>
+          <circle class="led-power" cx="${x0 + 68 + dx * 0.20}" cy="${y0 + dy * 0.20}" r="2.2" fill="#3dff7a"/>
+        </g>
       </g>`;
   }
 
@@ -137,7 +155,7 @@ export class PrintTheater {
     c.width = label.width; c.height = label.height;
     c.getContext('2d').drawImage(label.canvas, 0, 0);
     c.style.width = `${label.width * s}px`; c.style.height = `${label.height * s}px`;
-    const outX = SVG_LEFT + SLOT.x + SLOT.w;
+    const outX = SVG_LEFT + SLOT.x + SLOT.w - 2;
     this.labelOut.style.left = `${outX}px`;
     this.labelOut.style.top = `${SVG_TOP + SLOT.y}px`;
     this.labelOut.style.width = `${this.scene.clientWidth - outX}px`;
