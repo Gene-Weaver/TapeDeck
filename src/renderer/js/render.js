@@ -42,15 +42,22 @@ const measureCtx = document.createElement('canvas').getContext('2d');
 function measureText(el, size) {
   measureCtx.font = fontString(el, size);
   const lines = String(el._resolved ?? '').split('\n');
-  let w = 0, asc = 0, desc = 0;
+  let w = 0, fontAsc = 0, fontDesc = 0;
+  const per = [];
   for (const ln of lines) {
     const m = measureCtx.measureText(ln || ' ');
     w = Math.max(w, m.width);
-    asc = Math.max(asc, m.fontBoundingBoxAscent ?? m.actualBoundingBoxAscent ?? size * 0.8);
-    desc = Math.max(desc, m.fontBoundingBoxDescent ?? m.actualBoundingBoxDescent ?? size * 0.22);
+    fontAsc = Math.max(fontAsc, m.fontBoundingBoxAscent ?? m.actualBoundingBoxAscent ?? size * 0.8);
+    fontDesc = Math.max(fontDesc, m.fontBoundingBoxDescent ?? m.actualBoundingBoxDescent ?? size * 0.22);
+    per.push({ asc: m.actualBoundingBoxAscent ?? 0, desc: m.actualBoundingBoxDescent ?? 0 });
   }
-  const lh = Math.round((asc + desc) * (el.lineHeight || 1.15));
-  return { w: Math.ceil(w), lineH: lh, asc, h: lh * lines.length, lines };
+  const lineH = Math.round((fontAsc + fontDesc) * (el.lineHeight || 1.15));
+  // Tight vertical bounds of the actual glyphs (so "UM-AA-01" centres on its capitals, not on the
+  // font's em box with its empty descender space). Fall back to font metrics for blank text.
+  let asc = Math.ceil(per[0].asc), desc = Math.ceil(per[per.length - 1].desc);
+  if (asc + desc < 2) { asc = Math.ceil(fontAsc); desc = Math.ceil(fontDesc); }
+  const h = (lines.length - 1) * lineH + asc + desc;
+  return { w: Math.ceil(w), lineH, asc, h: Math.max(1, h), lines };
 }
 
 function fitTextSize(el, maxH, maxW) {
@@ -312,13 +319,13 @@ export function textWidthFor(el, text, tapeMm) {
 }
 
 /**
- * Rod-wrap layout: the name, two vertical lines 5 mm apart (the fold goes around the rod
- * between them), then the name again, so the label sticks to itself and reads on both faces.
+ * Rod-wrap layout: QR, the name, a solid 5 mm box (the fold goes around the rod there), the name
+ * again, QR, so the label sticks to itself and reads on both faces.
  * `sampleText` sizes the fixed text boxes so every label in a series lines up identically.
  */
 export function wrapLayout(tapeMm, sampleText = 'UM-BZ-03', { qr = true } = {}) {
   const t = tape(tapeMm);
-  const pad = 4, gap = 10, lineW = 2, between = mmToDots(5), qrGap = 6;
+  const pad = 4, gap = 10, lineW = 0, between = mmToDots(5), qrGap = 6;
   const base = { ...defaultElement('text', t), text: '{text}', font: 'Helvetica', bold: true, align: 'center', autoSize: true, vCenter: true, hCenter: false };
   const w = textWidthFor(base, sampleText, tapeMm) + 6;
   const els = [];
@@ -327,8 +334,8 @@ export function wrapLayout(tapeMm, sampleText = 'UM-BZ-03', { qr = true } = {}) 
   const mkQr = () => ({ ...defaultElement('qr', t), id: uid(), x, size: t.pins, text: '{text}', ecc: 'M', quiet: 0, vCenter: true, hCenter: false });
   if (qr) { els.push(mkQr()); x += t.pins + qrGap; }
   els.push({ ...base, id: uid(), x, w }); x += w + gap;
-  const l1 = { ...defaultElement('line', t), id: uid(), x, w: lineW, h: t.pins, vCenter: true }; els.push(l1); x += lineW + between;
-  els.push({ ...l1, id: uid(), x }); x += lineW + gap;
+  els.push({ ...defaultElement('rect', t), id: uid(), x, w: between, h: t.pins, fill: true, radius: 0, stroke: 1, vCenter: true, hCenter: false }); x += between + gap;
+  void lineW;
   els.push({ ...base, id: uid(), x, w }); x += w;
   if (qr) { x += qrGap; els.push(mkQr()); }
   return { version: 1, name: 'Label wrap', length: { mode: 'auto', dots: mmToDots(40), padding: pad }, border: false, elements: els };
