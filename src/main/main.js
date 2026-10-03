@@ -72,7 +72,7 @@ ipcMain.handle('print', (e, body) => {
     return { width: l.width, height: l.height, pixels: px };
   });
   const names = body.labels.map(l => l.name || '');
-  const options = { tapeMm: body.tapeMm, autoCut: body.autoCut !== false, cutEach: body.cutEach || 1, mirror: !!body.mirror, marginDots: Math.max(14, body.marginDots || 14), flip: !!body.flip, checkMedia: body.checkMedia !== false, chain: body.leader === 'chain' };
+  const options = { tapeMm: body.tapeMm, autoCut: body.autoCut !== false, cutEach: body.cutEach || 1, mirror: !!body.mirror, marginDots: Math.max(14, body.marginDots || 14), flip: !!body.flip, checkMedia: body.checkMedia !== false, chain: true, offsetDots: Number(body.offsetDots) || 0 };
   const wc = e.sender;
   return jobs.start({ pages, names, options, mock: !!body.mock, mockTape: body.mockTape }, (job) => { if (!wc.isDestroyed()) wc.send('job-progress', job); });
 });

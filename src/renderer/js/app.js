@@ -7,7 +7,6 @@ import { api, canvasToPixels } from './api.js';
 
 const $ = (id) => document.getElementById(id);
 const CSS_PER_DOT = 96 / 180;            // zoom 1 = real size on a 96 dpi screen
-const LEADER_MM = 24.5;                  // head-to-cutter distance: blank tape at the start of every job
 
 // ---------------------------------------------------------------- state
 const DEFAULTS = {
@@ -16,7 +15,7 @@ const DEFAULTS = {
   pattern: { kind: 'counter', prefix: 'LEAF-', suffix: '', start: 1, end: 20, step: 1, pad: 4, tpl: 'LEAF-{n:06}', tStart: 1, tCount: 20, tStep: 1 },
   batch: { text: '', header: false, tpl: '' },
   style: { font: 'Helvetica', bold: false, italic: false, invert: false, auto: true, size: 22, align: 'center', border: false, lenMode: 'auto', lenMm: 30, padMm: 1 },
-  options: { autoCut: true, cutEach: 1, marginMm: 2, mirror: false, flip: false, check: true, sound: false, mock: false, mockTape: 6, leader: 'chain' },
+  options: { autoCut: true, cutEach: 1, marginMm: 2, mirror: false, flip: false, check: true, sound: false, mock: false, mockTape: 6, offsetDots: 0 },
   designer: { sampleText: 'LEAF-000042', sampleN: 42, zoom: 6 },
 };
 let S = loadState();
@@ -118,28 +117,21 @@ const refreshPreview = debounce(async () => {
   const H = t.pins, hCss = H * cpd;
   const frag = document.createDocumentFragment();
   let total = 0;
-  const leader = S.options.leader || 'chain', leaderDots = mmToDots(LEADER_MM);
-  if (values.length && leader !== 'chain') {
-    const chip = leaderDots + 2 * marginDots; total += chip;
-    const el = document.createElement('div'); el.className = 'lab waste'; el.style.width = `${chip * cpd}px`;
-    el.innerHTML = `<div class="tape" style="height:${hCss}px;width:${chip * cpd}px;opacity:.55"></div><div class="cut" style="height:${hCss + 28}px"></div><div class="cap" title="The PT-P700 always cuts its blank leader off before the first label of a job. Use Chain mode in settings to avoid it.">leader chip (printer) · ${fmtLen(chip)}</div>`;
-    frag.appendChild(el);
-  }
   const MAX_DOM = 3000;
   const shown = Math.min(values.length, MAX_DOM);
   for (let i = 0; i < shown; i++) {
-    const W = widths[i], lead = 0, phys = W + 2 * marginDots;
+    const W = widths[i], phys = W + 2 * marginDots;
     total += phys;
     const lab = document.createElement('div'); lab.className = 'lab'; lab.dataset.i = i; lab.dataset.token = token;
     lab.style.width = `${phys * cpd}px`;
     const row = document.createElement('div'); row.style.cssText = `display:flex;height:${hCss}px;align-items:stretch`;
-    const m1 = document.createElement('div'); m1.className = 'tape'; m1.style.cssText = `width:${(marginDots + lead) * cpd}px;opacity:.75`;
+    const m1 = document.createElement('div'); m1.className = 'tape'; m1.style.cssText = `width:${marginDots * cpd}px;opacity:.75`;
     const c = document.createElement('canvas'); c.className = 'tape pending'; c.width = 1; c.height = 1; c.style.cssText = `width:${W * cpd}px;height:${hCss}px`;
     const m2 = document.createElement('div'); m2.className = 'tape'; m2.style.cssText = `width:${marginDots * cpd}px;opacity:.75`;
     row.append(m1, c, m2); lab.appendChild(row);
     const cut = document.createElement('div'); cut.className = 'cut'; cut.style.height = `${hCss + 28}px`; lab.appendChild(cut);
     const cap = document.createElement('div'); cap.className = 'cap'; cap.title = values[i].text;
-    cap.textContent = `${values[i].text.replace(/\n/g, ' ')} · ${fmtLen(phys)}${lead ? ' (incl. leader)' : ''}`; lab.appendChild(cap);
+    cap.textContent = `${values[i].text.replace(/\n/g, ' ')} · ${fmtLen(phys)}`; lab.appendChild(cap);
     frag.appendChild(lab);
   }
   for (let i = shown; i < values.length; i++) total += widths[i] + 2 * marginDots;
@@ -175,7 +167,7 @@ function printBody(labels) {
   const o = S.options;
   return { tapeMm: S.tapeMm, labels: labels.map(l => ({ pixels: canvasToPixels(l.canvas), width: l.width, height: l.height, name: l.name })),
     autoCut: o.autoCut, cutEach: Number(o.cutEach) || 1, mirror: o.mirror, marginDots: Math.max(14, mmToDots(o.marginMm)),
-    flip: o.flip, checkMedia: o.check, mock: o.mock, mockTape: Number(o.mockTape) || 6, leader: o.leader || 'chain' };
+    flip: o.flip, checkMedia: o.check, mock: o.mock, mockTape: Number(o.mockTape) || 6, offsetDots: Number(o.offsetDots) || 0 };
 }
 
 // ---------------------------------------------------------------- print flow
@@ -193,9 +185,9 @@ async function doPrint() {
     theater.update({ state: 'error', error: (e.message || String(e)).replace(/^Error invoking remote method 'print': Error: /, ''), printed: 0, index: 0, phase: '' }); return;
   }
   currentJob = job.id;
-  theater.update(job, { chain: (S.options.leader || 'chain') === 'chain' });
+  theater.update(job, { chain: true });
 }
-api.onJobProgress((j) => { if (j.id === currentJob) { theater.update(j, { chain: (S.options.leader || 'chain') === 'chain' }); if (j.state !== 'printing' && j.state !== 'queued') currentJob = null; } });
+api.onJobProgress((j) => { if (j.id === currentJob) { theater.update(j, { chain: true }); if (j.state !== 'printing' && j.state !== 'queued') currentJob = null; } });
 $('thClose').onclick = () => theater.close();
 async function doFeedCut(btn) {
   const o = S.options; btn && (btn.disabled = true);
@@ -308,9 +300,9 @@ $('zoom').addEventListener('input', () => { S.zoom = Number($('zoom').value); $(
 bindInput('useDesigner', () => S.useDesigner, v => S.useDesigner = v, 'change');
 // settings
 for (const [id, key, evt] of [['optAutoCut', 'autoCut', 'change'], ['optCutEach', 'cutEach'], ['optMarginMm', 'marginMm'], ['optMirror', 'mirror', 'change'], ['optFlip', 'flip', 'change'],
-  ['optCheck', 'check', 'change'], ['optMock', 'mock', 'change'], ['optMockTape', 'mockTape', 'change'], ['optLeader', 'leader', 'change']])
+  ['optCheck', 'check', 'change'], ['optMock', 'mock', 'change'], ['optMockTape', 'mockTape', 'change'], ['optOffset', 'offsetDots']])
   bindInput(id, () => S.options[key], v => S.options[key] = v, evt || 'input');
-$('optMarginMm').addEventListener('input', refreshPreview); $('optLeader').addEventListener('change', refreshPreview);
+$('optMarginMm').addEventListener('input', refreshPreview);
 $('thSound').checked = S.options.sound; $('thSound').addEventListener('change', () => { S.options.sound = $('thSound').checked; saveState(); });
 $('btnSettings').onclick = () => $('settings').classList.remove('hidden');
 $('settingsClose').onclick = () => $('settings').classList.add('hidden');

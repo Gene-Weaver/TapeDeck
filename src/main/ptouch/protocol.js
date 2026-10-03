@@ -110,22 +110,17 @@ function buildFeedAndCut(tape, opt = {}) {
   return Buffer.concat([buildJobHeader(), buildPage([Buffer.alloc(RASTER_BYTES)], tape, true, true, { ...opt, autoCut: true, chain: false })]);
 }
 
-/** Head-to-cutter distance: the blank tape every job starts with unless the previous job was chained. */
-const LEADER_MM = 24.5;
-
 /**
  * pages: array of raster-line arrays. Returns [header, page1, page2, ...].
- * The PT-P700 firmware itself cuts the ~24.5 mm leader off as a blank chip at the start of a
- * job (verified: adding our own blank page produced a second blank piece), so nothing is
- * prepended here.
- * opt.chain (default false): do not feed and cut after the last page; the label stays inside
- *   the printer and is released by the next job's first cut, which avoids the leader chip.
+ * Chain printing is the default: the last page ends with FF, so the printer never feeds blank
+ * tape after a job. The last label is released by the next job's cut or by buildFeedAndCut.
+ * opt.chain=false ends the job with ^Z (feed and cut).
  */
 function buildJob(pages, tape, opt = {}) {
   const chunks = [buildJobHeader()];
-  const chain = !!opt.chain;
+  const chain = opt.chain !== false;
   pages.forEach((lines, i) => chunks.push(buildPage(lines, tape, i === 0, i === pages.length - 1 && !chain, opt)));
   return chunks;
 }
 
-module.exports = { LEADER_MM, buildFeedAndCut, invalidate, initialize, statusRequest, switchToRasterMode, notifyMode, printInformation, variousMode, advancedMode, cutEvery, margin, compression, printPage, packBits, unpackBits, rasterLine, pixelsToRasterLines, buildPage, buildJobHeader, buildJob };
+module.exports = { buildFeedAndCut, invalidate, initialize, statusRequest, switchToRasterMode, notifyMode, printInformation, variousMode, advancedMode, cutEvery, margin, compression, printPage, packBits, unpackBits, rasterLine, pixelsToRasterLines, buildPage, buildJobHeader, buildJob };

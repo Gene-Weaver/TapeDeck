@@ -18,7 +18,12 @@ test('packbits roundtrip and known values', () => {
   assert.deepEqual(P.packBits(Buffer.from([1, 2])), Buffer.from([1, 1, 2]));
 });
 
-test('tape table sums to 128 pins', () => { for (const t of Object.values(TAPES)) assert.equal(t.pins + 2 * t.marginPins, 128); });
+test('tape table: full width, centred, offset clamps', () => {
+  assert.equal(tapeForMm(6).pins, 43); assert.equal(tapeForMm(12).pins, 85); assert.equal(tapeForMm(18).pins, 128); assert.equal(tapeForMm(24).pins, 128);
+  for (const k of Object.keys(TAPES)) { const t = tapeForMm(k); assert.ok(t.marginPins >= 0 && t.marginPins + t.pins <= 128); }
+  assert.equal(tapeForMm(6, 5).marginPins, tapeForMm(6).marginPins + 5);
+  assert.equal(tapeForMm(24, 9).marginPins, 0);
+});
 
 test('pixels -> raster lines places pins at margin, reversed', () => {
   const tape = tapeForMm(6);
@@ -30,7 +35,7 @@ test('pixels -> raster lines places pins at margin, reversed', () => {
   const top = new Uint8Array(tape.pins); top[0] = 1;
   const [a] = P.pixelsToRasterLines(top, 1, tape.pins, tape), [b] = P.pixelsToRasterLines(top, 1, tape.pins, tape, true);
   assert.notDeepEqual(a, b);
-  assert.throws(() => P.pixelsToRasterLines(px, 1, 10, tape), /needs 32/);
+  assert.throws(() => P.pixelsToRasterLines(px, 1, 10, tape), /needs 43/);
 });
 
 test('columns are sent last-first so the label is not mirrored', () => {
@@ -52,14 +57,14 @@ test('job structure: header, per-page chain flags, cut, packbits, blank lines', 
   const tape = tapeForMm(6);
   const blank = new Uint8Array(10 * tape.pins), dot = new Uint8Array(10 * tape.pins); dot[5 * 10 + 3] = 1;
   const pages = [P.pixelsToRasterLines(blank, 10, tape.pins, tape), P.pixelsToRasterLines(dot, 10, tape.pins, tape)];
-  const chunks = P.buildJob(pages, tape, {});
+  const chunks = P.buildJob(pages, tape, { chain: false });
   assert.ok(chunks[0].equals(Buffer.concat([Buffer.alloc(200), Buffer.from([0x1b, 0x40, 0x1b, 0x69, 0x61, 0x01])])));
   assert.equal(chunks[1][chunks[1].length - 1], 0x0c); assert.equal(chunks[2][chunks[2].length - 1], 0x1a);
   assert.ok(chunks[1].includes(Buffer.from([0x1b, 0x69, 0x4b, 0x00]))); assert.ok(chunks[2].includes(Buffer.from([0x1b, 0x69, 0x4b, 0x08])));
   assert.ok(chunks[1].includes(Buffer.from([0x1b, 0x69, 0x4d, 0x40]))); assert.ok(chunks[1].includes(Buffer.from([0x4d, 0x02])));
   assert.ok([...chunks[1]].filter(b => b === 0x5a).length >= 10);   // blank page is all Z lines
-  assert.equal(chunks.length, 3);                                     // header + 2 pages, no extra blank page
-  const chained = P.buildJob(pages, tape, { chain: true });
+  assert.equal(chunks.length, 3);                                     // header + 2 pages, nothing extra
+  const chained = P.buildJob(pages, tape, {});                        // default: chain
   assert.equal(chained[2][chained[2].length - 1], 0x0c);             // last page not fed/cut
 });
 
@@ -75,7 +80,7 @@ test('mock print end to end with progress', async () => {
   const p = new Printer(t); const tape = tapeForMm(6);
   const pages = Array.from({ length: 3 }, () => ({ width: 60, height: tape.pins, pixels: new Uint8Array(60 * tape.pins).fill(0).map((_, i) => (i % 7 === 0 ? 1 : 0)) }));
   const events = [];
-  const n = await p.printPages(pages, { tapeMm: 6 }, (i, tot, ph) => events.push(`${i}:${ph}`));
+  const n = await p.printPages(pages, { tapeMm: 6, chain: false }, (i, tot, ph) => events.push(`${i}:${ph}`));
   assert.equal(n, 3); assert.equal(t.pagesPrinted, 3); assert.ok(events.includes('2:done'));
 });
 
@@ -106,7 +111,7 @@ test('feed and cut builds a one-line job that feeds and cuts', async () => {
 
 test('mock rejects wrong tape', async () => {
   const p = new Printer(new MockTransport({ tapeMm: 12, realtime: false }));
-  await assert.rejects(p.printPages([{ width: 5, height: 32, pixels: new Uint8Array(5 * 32) }], { tapeMm: 6 }), (e) => e instanceof PrintError && /12 mm/.test(e.message));
+  await assert.rejects(p.printPages([{ width: 5, height: 43, pixels: new Uint8Array(5 * 43) }], { tapeMm: 6 }), (e) => e instanceof PrintError && /12 mm/.test(e.message));
 });
 
 test('job manager runs a mock job and reports progress', async () => {
