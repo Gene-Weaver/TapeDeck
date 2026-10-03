@@ -39,13 +39,15 @@ class Printer {
       mediaType = st.mediaTypeCode;
     }
     const rasterPages = pages.map(p => P.pixelsToRasterLines(p.pixels, p.width, p.height, tape, !!options.flip));
-    const chunks = P.buildJob(rasterPages, tape, { autoCut: options.autoCut !== false, cutEach: options.cutEach || 1, mirror: !!options.mirror, marginDots: options.marginDots ?? 14, mediaType });
+    const trim = options.trimLeader !== false;
+    const chunks = P.buildJob(rasterPages, tape, { autoCut: options.autoCut !== false, cutEach: options.cutEach || 1, mirror: !!options.mirror, marginDots: options.marginDots ?? 14, mediaType, trimLeader: trim, chain: !!options.chain });
     await this.t.write(chunks[0]);
+    if (trim) { await this.t.write(chunks[1]); await this._waitPageDone(); }   // leader chip
     const total = pages.length; let printed = 0;
     for (let i = 0; i < total; i++) {
       if (cancel && cancel()) break;
       progress && progress(i, total, 'sending');
-      await this.t.write(chunks[i + 1]);
+      await this.t.write(chunks[i + 1 + (trim ? 1 : 0)]);
       progress && progress(i, total, 'printing');
       await this._waitPageDone();
       printed++;

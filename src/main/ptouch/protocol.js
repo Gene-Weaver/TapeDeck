@@ -102,12 +102,25 @@ function buildPage(lines, tape, first, last, opt) {
   parts.push(printPage(last));
   return Buffer.concat(parts);
 }
+// note: a page built with last=false ends in FF (print, wait for next page) which is also what chain printing needs
 const buildJobHeader = () => Buffer.concat([invalidate(), initialize(), switchToRasterMode()]);
-/** pages: array of raster-line arrays. Returns [header, page1, page2, ...]. */
+
+/** Head-to-cutter distance: the blank tape every job starts with unless the previous job was chained. */
+const LEADER_MM = 24.5;
+
+/**
+ * pages: array of raster-line arrays. Returns [header, (leader page), page1, page2, ...].
+ * opt.trimLeader (default true): prepend a 2-line blank page so the printer cuts the ~24.5 mm
+ *   leader off as a separate chip and the first real label comes out as short as the others.
+ * opt.chain (default false): do not feed and cut after the last page; the label stays inside
+ *   the printer and is released by the next job's first cut (no leader waste on that job).
+ */
 function buildJob(pages, tape, opt = {}) {
   const chunks = [buildJobHeader()];
-  pages.forEach((lines, i) => chunks.push(buildPage(lines, tape, i === 0, i === pages.length - 1, opt)));
+  const trim = opt.trimLeader !== false, chain = !!opt.chain;
+  const all = trim ? [[Buffer.alloc(RASTER_BYTES), Buffer.alloc(RASTER_BYTES)], ...pages] : pages.slice();
+  all.forEach((lines, i) => chunks.push(buildPage(lines, tape, i === 0, i === all.length - 1 && !chain, opt)));
   return chunks;
 }
 
-module.exports = { invalidate, initialize, statusRequest, switchToRasterMode, notifyMode, printInformation, variousMode, advancedMode, cutEvery, margin, compression, printPage, packBits, unpackBits, rasterLine, pixelsToRasterLines, buildPage, buildJobHeader, buildJob };
+module.exports = { LEADER_MM, invalidate, initialize, statusRequest, switchToRasterMode, notifyMode, printInformation, variousMode, advancedMode, cutEvery, margin, compression, printPage, packBits, unpackBits, rasterLine, pixelsToRasterLines, buildPage, buildJobHeader, buildJob };

@@ -52,12 +52,17 @@ test('job structure: header, per-page chain flags, cut, packbits, blank lines', 
   const tape = tapeForMm(6);
   const blank = new Uint8Array(10 * tape.pins), dot = new Uint8Array(10 * tape.pins); dot[5 * 10 + 3] = 1;
   const pages = [P.pixelsToRasterLines(blank, 10, tape.pins, tape), P.pixelsToRasterLines(dot, 10, tape.pins, tape)];
-  const chunks = P.buildJob(pages, tape, {});
+  const chunks = P.buildJob(pages, tape, { trimLeader: false });
   assert.ok(chunks[0].equals(Buffer.concat([Buffer.alloc(200), Buffer.from([0x1b, 0x40, 0x1b, 0x69, 0x61, 0x01])])));
   assert.equal(chunks[1][chunks[1].length - 1], 0x0c); assert.equal(chunks[2][chunks[2].length - 1], 0x1a);
   assert.ok(chunks[1].includes(Buffer.from([0x1b, 0x69, 0x4b, 0x00]))); assert.ok(chunks[2].includes(Buffer.from([0x1b, 0x69, 0x4b, 0x08])));
   assert.ok(chunks[1].includes(Buffer.from([0x1b, 0x69, 0x4d, 0x40]))); assert.ok(chunks[1].includes(Buffer.from([0x4d, 0x02])));
   assert.ok([...chunks[1]].filter(b => b === 0x5a).length >= 10);   // blank page is all Z lines
+  const trimmed = P.buildJob(pages, tape, {});                        // default: leader chip page first
+  assert.equal(trimmed.length, 4);
+  assert.ok(trimmed[1].includes(Buffer.from([0x5a, 0x5a, 0x0c])));
+  const chained = P.buildJob(pages, tape, { trimLeader: false, chain: true });
+  assert.equal(chained[2][chained[2].length - 1], 0x0c);             // last page not fed/cut
 });
 
 test('status parse', () => {
@@ -73,7 +78,7 @@ test('mock print end to end with progress', async () => {
   const pages = Array.from({ length: 3 }, () => ({ width: 60, height: tape.pins, pixels: new Uint8Array(60 * tape.pins).fill(0).map((_, i) => (i % 7 === 0 ? 1 : 0)) }));
   const events = [];
   const n = await p.printPages(pages, { tapeMm: 6 }, (i, tot, ph) => events.push(`${i}:${ph}`));
-  assert.equal(n, 3); assert.equal(t.pagesPrinted, 3); assert.ok(events.includes('2:done'));
+  assert.equal(n, 3); assert.equal(t.pagesPrinted, 4); assert.ok(events.includes('2:done'));   // 3 labels + leader chip
 });
 
 test('mock rejects wrong tape', async () => {
