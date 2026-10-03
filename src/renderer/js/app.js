@@ -19,7 +19,7 @@ const DEFAULTS = {
   designer: { zoom: 6 },
 };
 let S = loadState();
-if (S.pattern._v !== 2) { S.pattern = defaultPattern(); }   // 2026-10-02: Number before Letter
+if (S.patternVersion !== 2) { S.pattern = defaultPattern(); S.patternVersion = 2; }   // 2026-10-02: Number before Letter (flag is never in DEFAULTS, so a merge can't fake it)
 let layout = loadLayout();
 let config = { mock: false, version: '' };
 let values = [], widths = [], seriesTotal = 0, previewToken = 0;
