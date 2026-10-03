@@ -119,16 +119,16 @@ const refreshPreview = debounce(async () => {
   const frag = document.createDocumentFragment();
   let total = 0;
   const leader = S.options.leader || 'trim', leaderDots = mmToDots(LEADER_MM);
-  if (values.length && leader === 'trim') {
+  if (values.length && leader !== 'chain') {
     const chip = leaderDots + 2 * marginDots; total += chip;
     const el = document.createElement('div'); el.className = 'lab waste'; el.style.width = `${chip * cpd}px`;
-    el.innerHTML = `<div class="tape" style="height:${hCss}px;width:${chip * cpd}px;opacity:.55"></div><div class="cut" style="height:${hCss + 28}px"></div><div class="cap" title="The printer feeds this blank leader out and cuts it off before the first label">leader chip · ${fmtLen(chip)}</div>`;
+    el.innerHTML = `<div class="tape" style="height:${hCss}px;width:${chip * cpd}px;opacity:.55"></div><div class="cut" style="height:${hCss + 28}px"></div><div class="cap" title="The PT-P700 always cuts its blank leader off before the first label of a job. Use Chain mode in settings to avoid it.">leader chip (printer) · ${fmtLen(chip)}</div>`;
     frag.appendChild(el);
   }
   const MAX_DOM = 3000;
   const shown = Math.min(values.length, MAX_DOM);
   for (let i = 0; i < shown; i++) {
-    const W = widths[i], lead = (i === 0 && leader === 'keep') ? leaderDots : 0, phys = W + 2 * marginDots + lead;
+    const W = widths[i], lead = 0, phys = W + 2 * marginDots;
     total += phys;
     const lab = document.createElement('div'); lab.className = 'lab'; lab.dataset.i = i; lab.dataset.token = token;
     lab.style.width = `${phys * cpd}px`;

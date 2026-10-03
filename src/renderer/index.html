@@ -194,9 +194,8 @@ Betula papyrifera"></textarea></label>
     <label class="field"><span>Feed margin (mm each side, min 2.0)</span><input type="number" id="optMarginMm" value="2" min="2" max="30" step="0.5"></label>
     <label class="field"><span>Tape leader <small>(the ~24.5 mm between print head and cutter)</small></span>
       <select id="optLeader">
-        <option value="trim">Cut it off as a blank chip before the first label (short labels)</option>
-        <option value="keep">Leave it attached to the first label</option>
-        <option value="chain">Chain: don't cut the last label; next job releases it (no waste)</option>
+        <option value="trim">Normal: the printer cuts it off as a blank chip before the first label</option>
+        <option value="chain">Chain: don't cut the last label; the next job releases it (no chip, no waste)</option>
       </select></label>
     <label class="check"><input type="checkbox" id="optMirror"> Mirror print (for clear tape behind glass)</label>
     <label class="check"><input type="checkbox" id="optFlip"> Flip pin order <small>(tick if a test print comes out upside-down)</small></label>

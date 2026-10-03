@@ -109,17 +109,17 @@ const buildJobHeader = () => Buffer.concat([invalidate(), initialize(), switchTo
 const LEADER_MM = 24.5;
 
 /**
- * pages: array of raster-line arrays. Returns [header, (leader page), page1, page2, ...].
- * opt.trimLeader (default true): prepend a 2-line blank page so the printer cuts the ~24.5 mm
- *   leader off as a separate chip and the first real label comes out as short as the others.
+ * pages: array of raster-line arrays. Returns [header, page1, page2, ...].
+ * The PT-P700 firmware itself cuts the ~24.5 mm leader off as a blank chip at the start of a
+ * job (verified: adding our own blank page produced a second blank piece), so nothing is
+ * prepended here.
  * opt.chain (default false): do not feed and cut after the last page; the label stays inside
- *   the printer and is released by the next job's first cut (no leader waste on that job).
+ *   the printer and is released by the next job's first cut, which avoids the leader chip.
  */
 function buildJob(pages, tape, opt = {}) {
   const chunks = [buildJobHeader()];
-  const trim = opt.trimLeader !== false, chain = !!opt.chain;
-  const all = trim ? [[Buffer.alloc(RASTER_BYTES), Buffer.alloc(RASTER_BYTES)], ...pages] : pages.slice();
-  all.forEach((lines, i) => chunks.push(buildPage(lines, tape, i === 0, i === all.length - 1 && !chain, opt)));
+  const chain = !!opt.chain;
+  pages.forEach((lines, i) => chunks.push(buildPage(lines, tape, i === 0, i === pages.length - 1 && !chain, opt)));
   return chunks;
 }
 
