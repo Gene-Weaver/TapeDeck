@@ -33,6 +33,14 @@ test('pixels -> raster lines places pins at margin, reversed', () => {
   assert.throws(() => P.pixelsToRasterLines(px, 1, 10, tape), /needs 32/);
 });
 
+test('columns are sent last-first so the label is not mirrored', () => {
+  const tape = tapeForMm(6);
+  const px = new Uint8Array(3 * tape.pins); px[0 * 3 + 0] = 1;      // only column 0 has ink (top-left pixel)
+  const lines = P.pixelsToRasterLines(px, 3, tape.pins, tape);
+  assert.equal(lines.length, 3);
+  assert.ok(!lines[0].some(b => b) && !lines[1].some(b => b) && lines[2].some(b => b));
+});
+
 test('print information layout', () => {
   const cmd = P.printInformation(tapeForMm(12), 0x010203, false, 0x01);
   assert.deepEqual([...cmd.subarray(0, 3)], [0x1b, 0x69, 0x7a]);
@@ -45,11 +53,11 @@ test('job structure: header, per-page chain flags, cut, packbits, blank lines', 
   const blank = new Uint8Array(10 * tape.pins), dot = new Uint8Array(10 * tape.pins); dot[5 * 10 + 3] = 1;
   const pages = [P.pixelsToRasterLines(blank, 10, tape.pins, tape), P.pixelsToRasterLines(dot, 10, tape.pins, tape)];
   const chunks = P.buildJob(pages, tape, {});
-  assert.ok(chunks[0].equals(Buffer.concat([Buffer.alloc(100), Buffer.from([0x1b, 0x40, 0x1b, 0x69, 0x61, 0x01])])));
+  assert.ok(chunks[0].equals(Buffer.concat([Buffer.alloc(200), Buffer.from([0x1b, 0x40, 0x1b, 0x69, 0x61, 0x01])])));
   assert.equal(chunks[1][chunks[1].length - 1], 0x0c); assert.equal(chunks[2][chunks[2].length - 1], 0x1a);
   assert.ok(chunks[1].includes(Buffer.from([0x1b, 0x69, 0x4b, 0x00]))); assert.ok(chunks[2].includes(Buffer.from([0x1b, 0x69, 0x4b, 0x08])));
   assert.ok(chunks[1].includes(Buffer.from([0x1b, 0x69, 0x4d, 0x40]))); assert.ok(chunks[1].includes(Buffer.from([0x4d, 0x02])));
-  assert.ok([...chunks[1]].filter(b => b === 0x5a).length >= 10);
+  assert.ok([...chunks[1]].filter(b => b === 0x5a).length >= 10);   // blank page is all Z lines
 });
 
 test('status parse', () => {

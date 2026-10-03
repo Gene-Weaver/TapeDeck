@@ -34,20 +34,31 @@ class UsbTransport {
       this.epOut.timeout = timeoutMs; this.epIn.timeout = timeoutMs;
     } catch (e) { try { dev.close(); } catch {} throw new TransportError(accessHint(e)); }
   }
-  write(data) {
+  async write(data) {
     const buf = Buffer.from(data.buffer ? data : Buffer.from(data));
     const CHUNK = 16 * 1024;
-    let p = Promise.resolve();
     for (let i = 0; i < buf.length; i += CHUNK) {
       const slice = buf.subarray(i, i + CHUNK);
-      p = p.then(() => new Promise((res, rej) => this.epOut.transfer(slice, (err) => err ? rej(err) : res())));
+      try {
+        await new Promise((res, rej) => this.epOut.transfer(slice, (err) => err ? rej(err) : res()));
+      } catch (err) {
+        if (!isTimeout(err, this.usb)) throw err;
+        await this._recover();
+        try { await new Promise((res, rej) => this.epOut.transfer(slice, (e2) => e2 ? rej(e2) : res())); }
+        catch (e2) { throw new TransportError('The printer stopped accepting data (USB write timed out) and did not recover. Switch the PT-P700 off and on again, check that the P-Lite light is off, then retry.'); }
+      }
     }
-    return p;
+  }
+  /** Clear endpoint halts and reset the device; the printer may still need a power cycle. */
+  async _recover() {
+    const ch = (ep) => new Promise(r => { try { ep.clearHalt(() => r()); } catch { r(); } });
+    await ch(this.epOut); await ch(this.epIn);
+    await new Promise(r => { try { this.dev.reset(() => r()); } catch { r(); } });
   }
   read(n = 32, timeoutMs) {
     this.epIn.timeout = timeoutMs || this.timeoutMs;
     return new Promise((res, rej) => this.epIn.transfer(n, (err, data) => {
-      if (err) { if (/timed?[ _]?out/i.test(String(err.message || err.errno)) || err.errno === this.usb.LIBUSB_TRANSFER_TIMED_OUT || err.errno === this.usb.LIBUSB_ERROR_TIMEOUT) return res(Buffer.alloc(0)); return rej(err); }
+      if (err) { if (isTimeout(err, this.usb)) return res(Buffer.alloc(0)); return rej(err); }
       res(Buffer.from(data || []));
     }));
   }
@@ -55,6 +66,10 @@ class UsbTransport {
     try { await new Promise(res => this.iface.release(true, () => res())); } catch {}
     try { this.dev.close(); } catch {}
   }
+}
+
+function isTimeout(err, usb) {
+  return /timed?[ _]?out/i.test(String(err && (err.message || err.errno))) || (usb && (err.errno === usb.LIBUSB_TRANSFER_TIMED_OUT || err.errno === usb.LIBUSB_ERROR_TIMEOUT));
 }
 
 function accessHint(e) {
@@ -80,10 +95,11 @@ class MockTransport {
     while (i < d.length) {
       const b = d[i];
       if (b === 0x1b && d[i + 1] === 0x69 && d[i + 2] === 0x53) { this.pending.push(fakeStatus({ widthMm: this.tapeMm })); i += 3; }
-      else if (b === 0x47) { const n = d[i + 1] | (d[i + 2] << 8); this.linesInPage++; i += 3 + n; }
+      else if (b === 0x47) { const n = d[i + 1] | (d[i + 2] << 8); this.linesInPage++; this.inkLines = (this.inkLines || 0) + 1; i += 3 + n; }
       else if (b === 0x5a) { this.linesInPage++; i += 1; }
       else if (b === 0x0c || b === 0x1a) {
         const lines = this.linesInPage; this.linesInPage = 0; this.pagesPrinted++;
+        console.log(`[mock] page ${this.pagesPrinted}: ${lines} raster lines, ${this.inkLines || 0} with ink`); this.inkLines = 0;
         if (this.realtime) { const mm = lines / 7.0866 + 4; await sleep(Math.min(6000, (mm / 20) * 1000)); }
         this.pending.push(fakeStatus({ widthMm: this.tapeMm, statusType: 0x06, phaseType: 0x01 }));
         this.pending.push(fakeStatus({ widthMm: this.tapeMm, statusType: 0x01 }));

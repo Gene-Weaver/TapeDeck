@@ -3,7 +3,7 @@
 const { RASTER_BYTES } = require('./tapes');
 const ESC = 0x1b;
 
-const invalidate = () => Buffer.alloc(100);                       // 100 NULs flush a partial command
+const invalidate = () => Buffer.alloc(200);                       // NULs flush a partial command (spec says 100; 200 also recovers a half-sent raster line)
 const initialize = () => Buffer.from([ESC, 0x40]);                // ESC @
 const statusRequest = () => Buffer.from([ESC, 0x69, 0x53]);       // ESC i S
 const switchToRasterMode = () => Buffer.from([ESC, 0x69, 0x61, 0x01]); // ESC i a 01
@@ -52,21 +52,25 @@ function unpackBits(data) {
   return Buffer.from(out);
 }
 
+/** One raster line: PackBits ('M 02') is what a live PT-P700 printed correctly with; 'Z' marks an all-white column. */
 function rasterLine(line, packbits = true) {
-  if (!line.some(b => b)) return Buffer.from([0x5a]);                  // Z: zero raster line
+  if (!line.some(b => b)) return Buffer.from([0x5a]);
   const payload = packbits ? packBits(line) : Buffer.from(line);
   return Buffer.concat([Buffer.from([0x47, payload.length & 0xff, payload.length >> 8]), payload]);
 }
 
 /**
  * pixels: Uint8Array(width*height), row-major, 1 = black; height must equal tape.pins.
- * Returns one 16-byte raster line per column. Pin 0 (bit 7 of byte 0) is the pin at the tape's
- * bottom edge, so each column is reversed (unless `flip`) and offset by the tape's margin.
+ * Returns one 16-byte raster line per column, LAST column first: the first raster line the
+ * printer receives ends up at the far (leading) end of the label, so sending columns in
+ * image order prints the text mirrored (verified on a PT-P700). Pin 0 (bit 7 of byte 0) is
+ * the pin at the tape's bottom edge, so each column is reversed (unless `flip`) and offset
+ * by the tape's margin.
  */
 function pixelsToRasterLines(pixels, width, height, tape, flip = false) {
   if (height !== tape.pins) throw new Error(`label is ${height} px tall, ${tape.label} tape needs ${tape.pins}`);
   const lines = [];
-  for (let x = 0; x < width; x++) {
+  for (let x = width - 1; x >= 0; x--) {
     const line = Buffer.alloc(RASTER_BYTES);
     for (let y = 0; y < height; y++) {
       if (!pixels[y * width + x]) continue;

@@ -67,6 +67,8 @@ ipcMain.handle('print', (e, body) => {
   const pages = body.labels.map((l, i) => {
     const px = l.pixels instanceof Uint8Array ? l.pixels : new Uint8Array(l.pixels);
     if (px.length !== l.width * l.height) throw new Error(`Label ${i + 1}: pixel buffer size mismatch`);
+    let ink = 0; for (let k = 0; k < px.length; k++) ink += px[k];
+    console.log(`[print] label ${i + 1}: ${l.width}x${l.height} dots, ${ink} black (${l.pixels && l.pixels.constructor && l.pixels.constructor.name})`);
     return { width: l.width, height: l.height, pixels: px };
   });
   const names = body.labels.map(l => l.name || '');
