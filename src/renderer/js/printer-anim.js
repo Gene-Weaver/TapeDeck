@@ -66,7 +66,7 @@ export class PrintTheater {
     this.blade.style.left = `${EXIT[0] + 2}px`;
     this.spark.style.left = `${EXIT[0] - 4}px`; this.spark.style.top = `${EXIT[1] - 5}px`;
     this.labelOut.style.left = '0px'; this.labelOut.style.top = '0px'; this.labelOut.style.width = '0'; this.labelOut.style.height = '0'; this.labelOut.style.transform = 'none';
-    this.queue = Promise.resolve();
+
   }
 
   // ---- the printer ----------------------------------------------------------------------
@@ -133,32 +133,53 @@ export class PrintTheater {
     this.btnCancel.classList.remove('hidden'); this.btnClose.classList.add('hidden'); this.btnFeedCut.classList.add('hidden');
     this.btnCancel.onclick = onCancel;
     this.root.classList.remove('hidden');
-    this.started = new Set(); this.cut = new Set(); this.queue = Promise.resolve();
-    labels.forEach((l, i) => { const s = document.createElement('span'); s.textContent = l.name || `#${i + 1}`; s.dataset.i = i; this.list.appendChild(s); });
+    this.job = { state: 'queued', index: 0, printed: 0, phase: '' }; this.chain = false; this.waiters = [];
+    labels.forEach((l, i) => { const sp = document.createElement('span'); sp.textContent = l.name || `#${i + 1}`; sp.dataset.i = i; this.list.appendChild(sp); });
+    this.run = ++this._runId || (this._runId = 1);
+    this._drive(this.run);
   }
 
-  close() { this.root.classList.add('hidden'); this.scene.classList.remove('printing'); if (this.raf) cancelAnimationFrame(this.raf); }
+  close() { this.root.classList.add('hidden'); this.scene.classList.remove('printing'); this.run = -1; if (this.raf) cancelAnimationFrame(this.raf); }
 
+  /** Called with every job update from the main process; the driver loop reacts to it. */
   update(job, { chain = false } = {}) {
-    this.chain = chain;
+    this.job = job; this.chain = chain;
     const n = this.labels.length;
-    for (let i = 0; i < job.printed; i++) this._ensure(i, true);
-    if ((job.phase === 'sending' || job.phase === 'printing') && job.state === 'printing') this._ensure(job.index, false);
     this.bar.style.width = `${(job.printed / n) * 100}%`;
-    if (job.state === 'printing') { const cur = this.labels[job.index]; this.status.textContent = `Label ${job.index + 1} / ${n}  ·  ${cur ? cur.name : ''}  ·  ${job.phase}`; }
-    else if (job.state === 'done') this.queue = this.queue.then(() => { this.status.textContent = this.chain ? `Done. ${job.printed} printed; the last label is still inside the printer (press Feed & cut).` : `Done. ${job.printed} label${job.printed === 1 ? '' : 's'} printed and cut.`; this._finish(); if (this.chain) this.btnFeedCut.classList.remove('hidden'); });
-    else if (job.state === 'error') this.queue = this.queue.then(() => { this.status.textContent = `Error: ${job.error}`; this.status.classList.add('err'); this._finish(); });
-    else if (job.state === 'cancelled') this.queue = this.queue.then(() => { this.status.textContent = `Cancelled after ${job.printed} label(s).`; this._finish(); });
+    if (job.state === 'printing') { const cur = this.labels[Math.min(job.index, n - 1)]; this.status.textContent = `Label ${Math.min(job.index + 1, n)} / ${n}  ·  ${cur ? cur.name : ''}  ·  ${job.phase}`; }
+    for (const w of this.waiters.splice(0)) w();
+  }
+
+  _terminal() { return ['done', 'error', 'cancelled'].includes(this.job.state); }
+  _until(pred) { return new Promise((res) => { const check = () => { if (pred() || this._terminal()) res(); else this.waiters.push(check); }; check(); }); }
+
+  /** Strictly sequential: label k emerges only after label k-1 was cut, however far ahead the job is. */
+  async _drive(run) {
+    const n = this.labels.length;
+    for (let k = 0; k < n && this.run === run; k++) {
+      await this._until(() => this.job.printed > k || (this.job.index >= k && this.job.state === 'printing'));
+      if (this.run !== run) return;
+      if (this._terminal() && this.job.printed <= k) break;           // job ended before this label started
+      this.scene.classList.add('printing');
+      await this._animateStart(k);
+      if (this.run !== run) return;
+      await this._until(() => this.job.printed > k);
+      if (this.run !== run) return;
+      if (this.job.printed <= k) break;                                // error/cancel while this label was out
+      const isLast = k === n - 1;
+      if (!(this.chain && isLast)) await this._animateCut(k);
+    }
+    if (this.run !== run) return;
+    await this._until(() => false);                                    // wait for the terminal state
+    const j = this.job;
+    if (j.state === 'done') this.status.textContent = this.chain ? `Done. ${j.printed} printed; the last label is still inside the printer (press Feed & cut).` : `Done. ${j.printed} label${j.printed === 1 ? '' : 's'} printed and cut.`;
+    else if (j.state === 'error') { this.status.textContent = `Error: ${j.error}`; this.status.classList.add('err'); }
+    else if (j.state === 'cancelled') this.status.textContent = `Cancelled after ${j.printed} label(s).`;
+    this._finish();
+    if (j.state === 'done' && this.chain) this.btnFeedCut.classList.remove('hidden');
   }
 
   _finish() { this.scene.classList.remove('printing'); this.btnCancel.classList.add('hidden'); this.btnClose.classList.remove('hidden'); this.title.textContent = 'Finished'; }
-
-  _ensure(i, done) {
-    if (i >= this.labels.length) return;
-    if (!this.started.has(i)) { this.started.add(i); this.queue = this.queue.then(() => this._animateStart(i)); }
-    const isLast = i === this.labels.length - 1;
-    if (done && !this.cut.has(i) && !(this.chain && isLast)) { this.cut.add(i); this.queue = this.queue.then(() => this._animateCut(i)); }
-  }
 
   // ---- tape coming out of the slot ---------------------------------------------------------
   _buildSlices(label) {
@@ -193,7 +214,6 @@ export class PrintTheater {
 
   async _animateStart(i) {
     const label = this.labels[i];
-    this.scene.classList.add('printing');
     this.list.querySelectorAll('span').forEach(sp => sp.classList.toggle('cur', +sp.dataset.i === i));
     this.cur = this._buildSlices(label);
     const mm = dotsToMm(label.width) + 4;
