@@ -1,8 +1,19 @@
-// Tape geometry (mirror of tapedeck/ptouch/tapes.py). Units: dots at 180 dpi.
+// Tape geometry for the renderer (mirror of src/main/ptouch/tapes.js). Units: dots at 180 dpi.
 export const DPI = 180;
 export const DOTS_PER_MM = DPI / 25.4;
 export const HEAD_PINS = 128;
-export const FEED_MM_PER_S = 20;          // rough PT-P700 print speed, used for the animation
+// How the PT-P700 moves tape during a job, for the print animation and time estimates. The print
+// head sits leaderMm behind the cutter, so a job first pushes out that blank stretch (cut off as the
+// lead piece), every label comes out with its feed margins, and the tape stops for each cut.
+// Measured on a real PT-P700 (2026-10-03, 6 mm tape, 72 mm Label wrap labels): 17.4 mm/s and 1.0 s
+// per cut, which predicted 3- and 21-label jobs to within 0.05 s. The animation still refines the
+// speed from each job's own reports and remembers it.
+export const PRINT = { mmPerS: 17.4, leaderMm: 24.5, cutS: 1.0, startS: 0.05 };
+
+/** Seconds a job takes: lead piece + every label (already including margins) at `mmPerS`, plus the cuts. */
+export function printSeconds(labelsMm, count, mmPerS = PRINT.mmPerS) {
+  return PRINT.startS + (PRINT.leaderMm + labelsMm) / mmPerS + (count + 1) * PRINT.cutS;
+}
 
 // Full tape width is printable (capped by the 128-pin head). Keep in sync with src/main/ptouch/tapes.js.
 const fullPins = (mm) => Math.min(HEAD_PINS, Math.floor(mm * DOTS_PER_MM));   // never wider than the tape

@@ -10,3 +10,8 @@ scratch_designs/
 # OS
 .DS_Store
 Icon?
+
+# Python leftovers from the 0.0 prototype
+__pycache__/
+*.pyc
+.pytest_cache/

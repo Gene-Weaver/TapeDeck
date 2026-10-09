@@ -1,48 +1,72 @@
-import { tape, mmToDots, dotsToMm, FEED_MM_PER_S } from './tape.js';
-import { batchValues, patternSeries, defaultPattern } from './pattern.js';
-import { renderLabel, measureLabelWidth, canvasToPng, hydrateLayout, serializeLayout, wrapLayout, plainLayout, FONTS } from './render.js';
+import { tape, TAPES, mmToDots, dotsToMm, printSeconds, PRINT } from './tape.js';
+import { batchValues, patternSeries, patternSample, spread, defaultPattern } from './pattern.js';
+import { renderLabel, measureLabelWidth, canvasToPng, hydrateLayout, setSeries, readImageFile, FONTS } from './render.js';
+import { fromFile, toFileText, snapshot, signature } from './layout.js';
 import { Designer } from './designer.js';
+import { Panel } from './panel.js';
+import { Library } from './library.js';
+import { History } from './history.js';
 import { PrintTheater } from './printer-anim.js';
-import { api, canvasToPixels } from './api.js';
+import { api, canvasToPixels, cleanError } from './api.js';
 
 const $ = (id) => document.getElementById(id);
 const CSS_PER_DOT = 96 / 180;            // zoom 1 = real size on a 96 dpi screen
-const STATE_KEY = 'tapedeck.state.v2', LAYOUT_KEY = 'tapedeck.layout.v4', TPL_KEY = 'tapedeck.templates';
 
-// ---------------------------------------------------------------- state
+// ---------------------------------------------------------------- settings (settings.json in the user data folder)
 const DEFAULTS = {
-  tapeMm: 6, mode: 'pattern', zoom: 1.5, wrap: true,
-  pattern: defaultPattern(),
+  tapeMm: 6, mode: 'pattern', zoom: 1.5, layoutId: 'label-wrap',
+  pattern: defaultPattern(), patternVersion: 2,
   single: { text: 'Hello tape', copies: 1 },
   batch: { text: '', header: false, tpl: '' },
-  options: { autoCut: true, cutEach: 1, marginMm: 2, mirror: false, flip: false, check: true, mock: false, mockTape: 6, offsetDots: 2 },
-  designer: { zoom: 6 },
+  options: { autoCut: true, cutEach: 1, marginMm: 2, mirror: false, flip: false, check: true, mock: false, mockTape: 6, offsetDots: 2, mmPerS: null },   // mmPerS: measured on real jobs
+  designer: { zoom: 6, manualZoom: false, snap: true },
 };
-let S = loadState();
-if (S.patternVersion !== 2) { S.pattern = defaultPattern(); S.patternVersion = 2; }   // 2026-10-02: Number before Letter (flag is never in DEFAULTS, so a merge can't fake it)
-let layout = loadLayout();
-let config = { mock: false, version: '' };
-let values = [], widths = [], seriesTotal = 0, previewToken = 0;
+const boot = api.boot();
+const config = boot.config || { mock: false, version: '', packaged: false };
+if (boot.error) console.error('boot:', boot.error);
+let firstRun = false;
+const S = loadSettings(boot.settings);
+let mock = !!(config.mock || S.options.mock);   // --mock applies to this session only and is never saved
 
-function loadState() {
-  try { const j = JSON.parse(localStorage.getItem(STATE_KEY) || 'null'); if (j) return deepMerge(structuredClone(DEFAULTS), j); } catch {}
-  return structuredClone(DEFAULTS);
+function loadSettings(stored) {
+  let s = stored;
+  if (!s) { firstRun = true; s = fromLocalStorage(); }
+  const out = deepMerge(structuredClone(DEFAULTS), s || {});
+  if (out.patternVersion !== 2) { out.pattern = defaultPattern(); out.patternVersion = 2; }   // 2026-10-02: Number before Letter
+  if (!TAPES[out.tapeMm]) out.tapeMm = 6;
+  if (out.options.speedModel !== 2) out.options.mmPerS = null;   // a speed measured under the old timing model (0.35 s cuts) does not fit the new one
+  if (!['pattern', 'single', 'batch'].includes(out.mode)) out.mode = 'pattern';
+  delete out.wrap;
+  return out;
 }
-function deepMerge(a, b) { for (const k in b) { if (b[k] && typeof b[k] === 'object' && !Array.isArray(b[k])) a[k] = deepMerge(a[k] || {}, b[k]); else a[k] = b[k]; } return a; }
-function saveState() { try { localStorage.setItem(STATE_KEY, JSON.stringify(S)); } catch {} }
-function loadLayout() {
-  try { const j = JSON.parse(localStorage.getItem(LAYOUT_KEY) || 'null'); if (j && j.elements) return j; } catch {}
-  return null;   // built after the first series is known (needs the longest text to size the boxes)
+/** TapeDeck 0.1 kept its state in localStorage; carry it over once. */
+function fromLocalStorage() {
+  try {
+    const old = JSON.parse(localStorage.getItem('tapedeck.state.v2') || 'null');
+    if (!old) return null;
+    const s = { ...old, layoutId: old.wrap === false ? 'plain' : 'label-wrap' };
+    delete s.wrap;
+    s.options = { ...(old.options || {}), mock: false };     // 0.1 saved a --mock launch as a setting
+    s.designer = { zoom: (old.designer && old.designer.zoom) || 6, manualZoom: !!(old.designer && old.designer.manualZoom), snap: true };
+    return s;
+  } catch { return null; }
 }
-function saveLayout() { try { localStorage.setItem(LAYOUT_KEY, serializeLayout(layout)); } catch {} }
-function templates() { try { return JSON.parse(localStorage.getItem(TPL_KEY) || '{}'); } catch { return {}; } }
-function saveTemplates(t) { localStorage.setItem(TPL_KEY, JSON.stringify(t)); }
+function deepMerge(a, b) { for (const k in b) { if (b[k] && typeof b[k] === 'object' && !Array.isArray(b[k])) a[k] = deepMerge(a[k] && typeof a[k] === 'object' ? a[k] : {}, b[k]); else a[k] = b[k]; } return a; }
+
+let settingsDirty = false, settingsTimer = null;
+function saveState() { settingsDirty = true; clearTimeout(settingsTimer); settingsTimer = setTimeout(flushSettings, 300); }
+async function flushSettings() {
+  clearTimeout(settingsTimer);
+  if (!settingsDirty) return;
+  settingsDirty = false;
+  try { await api.saveSettings(S); } catch (e) { settingsDirty = true; console.error('saving settings', e); }
+}
 
 // ---------------------------------------------------------------- helpers
 let toastTimer;
 function toast(msg, err = false, ms = 3500) {
   const t = $('toast'); t.textContent = msg; t.classList.toggle('err', err); t.classList.remove('hidden');
-  clearTimeout(toastTimer); if (ms) toastTimer = setTimeout(() => t.classList.add('hidden'), ms);
+  clearTimeout(toastTimer); if (ms) toastTimer = setTimeout(() => t.classList.add('hidden'), err ? Math.max(ms, 6000) : ms);
 }
 const debounce = (fn, ms) => { let h; return (...a) => { clearTimeout(h); h = setTimeout(() => fn(...a), ms); }; };
 const fmtLen = (dots) => { const mm = dotsToMm(dots); return mm >= 1000 ? `${(mm / 1000).toFixed(2)} m` : mm >= 100 ? `${(mm / 10).toFixed(1)} cm` : `${mm.toFixed(1)} mm`; };
@@ -55,9 +79,9 @@ async function chunked(n, fn, { perChunk = 150, onProgress } = {}) {
     if (end < n) await new Promise(r => requestAnimationFrame(r));
   }
 }
-const longest = (arr) => arr.reduce((m, v) => (v.text.length > m.length ? v.text : m), '');
 
 // ---------------------------------------------------------------- label values
+let values = [], widths = [], seriesTotal = 0, previewToken = 0;
 function computeValues() {
   if (S.mode === 'single') {
     const n = Math.max(1, Math.min(999, Number(S.single.copies) || 1));
@@ -69,13 +93,23 @@ function computeValues() {
 }
 function sampleValue() { return values[0] || { text: 'UM-001-A', n: 1, i: 1, fields: {} }; }
 
+// Text boxes set to "same width for all labels" are sized over the whole series, not just the print range.
+let seriesSig = null;
+function updateSeries() {
+  const sig = JSON.stringify(S.mode === 'pattern' ? ['p', S.pattern.segments, S.pattern.separator] : S.mode === 'batch' ? ['b', S.batch] : ['s', S.single.text]);
+  if (sig === seriesSig) return;
+  seriesSig = sig;
+  setSeries(S.mode === 'pattern' ? patternSample(S.pattern) : S.mode === 'batch' ? spread(values) : values.slice(0, 1));
+}
+values = computeValues(); updateSeries();
+
 // ---------------------------------------------------------------- tape preview strip
 const strip = $('strip');
 const io = new IntersectionObserver((entries) => { for (const e of entries) { if (e.isIntersecting) paintLab(e.target); else unpaintLab(e.target); } },
   { root: $('dock').querySelector('.strip-wrap'), rootMargin: '0px 600px 0px 600px' });
 function paintLab(el) {
   if (el.dataset.token !== String(previewToken) || el._painted) return;
-  const res = renderLabel(layout, values[+el.dataset.i], S.tapeMm);
+  const res = renderLabel(library.layout, values[+el.dataset.i], S.tapeMm);
   const c = el.querySelector('canvas.tape'); if (!c) return;
   c.width = res.width; c.height = res.height; c.getContext('2d').drawImage(res.canvas, 0, 0);
   c.classList.remove('pending'); el._painted = true;
@@ -85,7 +119,9 @@ function unpaintLab(el) { const c = el.querySelector('canvas.tape'); if (!c || !
 const refreshPreview = debounce(async () => {
   const token = ++previewToken;
   values = computeValues();
-  fitDesignerZoom(); designer.render();
+  updateSeries();
+  autoFitZoom(); designer.render(); panel.sync();
+  const layout = library.layout;
   const t = tape(S.tapeMm), cpd = CSS_PER_DOT * S.zoom, marginDots = mmToDots(S.options.marginMm);
   const stats = $('previewStats');
   stats.textContent = values.length ? `Measuring ${values.length} labels…` : 'No labels yet';
@@ -117,7 +153,7 @@ const refreshPreview = debounce(async () => {
   strip.appendChild(ruler); strip.appendChild(frag);
   if (values.length > shown) { const m = document.createElement('div'); m.className = 'more'; m.textContent = `… ${values.length - shown} more (all will print)`; strip.appendChild(m); }
   strip.querySelectorAll('.lab').forEach(el => io.observe(el));
-  const secs = Math.round(dotsToMm(total) / FEED_MM_PER_S + values.length * 1.2);
+  const secs = Math.round(printSeconds(dotsToMm(total), values.length, S.options.mmPerS || undefined));
   const range = S.mode === 'pattern' && seriesTotal > values.length ? ` (labels ${S.pattern.from}–${S.pattern.to} of ${seriesTotal})` : '';
   stats.textContent = values.length ? `${values.length} label${values.length === 1 ? '' : 's'}${range} · ${t.label} tape · ${fmtLen(total)} of tape (+ one blank lead piece per job) · ≈ ${secs >= 60 ? `${Math.floor(secs / 60)} min ${secs % 60} s` : `${secs} s`}` : 'No labels yet';
   $('btnPrint').textContent = values.length ? `Print ${values.length} label${values.length === 1 ? '' : 's'}` : 'Print';
@@ -126,7 +162,7 @@ const refreshPreview = debounce(async () => {
 
 // ---------------------------------------------------------------- output
 async function renderAllForOutput() {
-  const out = new Array(values.length);
+  const out = new Array(values.length), layout = library.layout;
   toast(`Rendering ${values.length} labels…`, false, 0);
   await chunked(values.length, (k) => { const r = renderLabel(layout, values[k], S.tapeMm); out[k] = { canvas: r.canvas, width: r.width, height: r.height, name: values[k].text.replace(/\n/g, ' ') }; },
     { perChunk: 60, onProgress: (d, n) => { if (n > 120) toast(`Rendering ${d} / ${n} labels…`, false, 0); } });
@@ -137,21 +173,35 @@ function printBody(labels) {
   const o = S.options;
   return { tapeMm: S.tapeMm, labels: labels.map(l => ({ pixels: canvasToPixels(l.canvas), width: l.width, height: l.height, name: l.name })),
     autoCut: o.autoCut, cutEach: Number(o.cutEach) || 1, mirror: o.mirror, marginDots: Math.max(14, mmToDots(o.marginMm)),
-    flip: o.flip, checkMedia: o.check, mock: o.mock, mockTape: Number(o.mockTape) || 6, offsetDots: Number(o.offsetDots) || 0 };
+    flip: o.flip, checkMedia: o.check, mock, mockTape: Number(o.mockTape) || 6, offsetDots: Number(o.offsetDots) || 0 };
 }
 const theater = new PrintTheater($('theater'));
-let currentJob = null;
+let currentJob = null, printStarting = false;
+const jobUpdates = new Map();   // progress can arrive before the print call returns the job id
+const finished = (j) => j && !['printing', 'queued'].includes(j.state);
 async function doPrint() {
-  if (!values.length || currentJob) return;
-  const labels = await renderAllForOutput();
-  const t = tape(S.tapeMm);
-  theater.open({ labels, tapeMm: S.tapeMm, tapeLabel: t.label, onCancel: async () => { if (currentJob) await api.cancel(currentJob); } });
-  let job;
-  try { job = await api.print(printBody(labels)); }
-  catch (e) { theater.update({ state: 'error', error: (e.message || String(e)).replace(/^Error invoking remote method '[^']+': Error: /, ''), printed: 0, index: 0, phase: '' }); return; }
-  currentJob = job.id; theater.update(job, { chain: false });
+  if (!values.length || currentJob || printStarting) return;   // Print pressed twice, or menu and button together
+  printStarting = true;
+  try {
+    const labels = await renderAllForOutput();
+    const t = tape(S.tapeMm);
+    theater.open({ labels, tapeMm: S.tapeMm, tapeLabel: t.label, onCancel: async () => { if (currentJob) await api.cancel(currentJob); },
+      marginMm: dotsToMm(Math.max(14, mmToDots(S.options.marginMm))),
+      mmPerS: (!mock && S.options.mmPerS) || PRINT.mmPerS,
+      onSpeed: (v) => { if (!mock) { S.options.mmPerS = Math.round(v * 10) / 10; S.options.speedModel = 2; saveState(); refreshPreview(); } } });
+    let job;
+    try { job = await api.print(printBody(labels)); }
+    catch (e) { theater.update({ state: 'error', error: cleanError(e), printed: 0, index: 0, phase: '' }); return; }
+    const latest = jobUpdates.get(job.id) || job;
+    currentJob = finished(latest) ? null : job.id;
+    theater.update(latest);
+  } finally { printStarting = false; }
 }
-api.onJobProgress((j) => { if (j.id === currentJob) { theater.update(j, { chain: false }); if (j.state !== 'printing' && j.state !== 'queued') currentJob = null; } });
+api.onJobProgress((j) => {
+  jobUpdates.set(j.id, j);
+  if (jobUpdates.size > 20) jobUpdates.delete(jobUpdates.keys().next().value);
+  if (j.id === currentJob) { theater.update(j); if (finished(j)) currentJob = null; }
+});
 $('thClose').onclick = () => theater.close();
 $('btnPrint').onclick = doPrint;
 $('btnExport').onclick = async () => {
@@ -161,19 +211,22 @@ $('btnExport').onclick = async () => {
   if (j.ok) { toast(`Saved ${j.count} PNGs to ${j.dir}`, false, 6000); api.openPath(j.dir); } else if (!j.cancelled) toast(j.error || 'Export failed', true);
 };
 async function doFeedCut(btn) {
-  const o = S.options; if (btn) btn.disabled = true;
-  try { await api.feedAndCut({ tapeMm: S.tapeMm, mock: o.mock, mockTape: Number(o.mockTape) || 6 }); toast('Fed and cut.'); }
-  catch (e) { toast((e.message || String(e)).replace(/^Error invoking remote method '[^']+': Error: /, ''), true, 6000); }
+  if (btn) btn.disabled = true;
+  try { await api.feedAndCut({ tapeMm: S.tapeMm, mock, mockTape: Number(S.options.mockTape) || 6 }); toast('Fed and cut.'); }
+  catch (e) { toast(cleanError(e), true, 6000); }
   finally { if (btn) btn.disabled = false; }
 }
 $('btnFeedCut').onclick = () => doFeedCut($('btnFeedCut'));
 $('thFeedCut').onclick = () => doFeedCut($('thFeedCut'));
 
 // ---------------------------------------------------------------- printer status
+let polling = false;
 async function pollStatus() {
+  if (polling) return;          // never stack polls behind a slow USB answer
+  polling = true;
   const pill = $('printerPill'), txt = pill.querySelector('.txt');
   try {
-    const j = await api.status({ mock: S.options.mock, mockTape: Number(S.options.mockTape) || 6 });
+    const j = await api.status({ mock, mockTape: Number(S.options.mockTape) || 6 });
     pill.classList.remove('pill-on', 'pill-off', 'pill-mock');
     if (j.connected) {
       const st = j.status; pill.classList.add(j.mock ? 'pill-mock' : 'pill-on');
@@ -182,7 +235,8 @@ async function pollStatus() {
       if (st.hasMedia && st.mediaWidthMm !== S.tapeMm) txt.textContent += `  (app set to ${tape(S.tapeMm).label})`;
     } else { pill.classList.add('pill-off'); txt.textContent = j.error || 'Printer not found'; }
     pill.title = j.error || JSON.stringify(j.status || {}, null, 1);
-  } catch (e) { pill.classList.add('pill-off'); pill.querySelector('.txt').textContent = `Bridge error: ${e.message}`; }
+  } catch (e) { pill.classList.remove('pill-on', 'pill-mock'); pill.classList.add('pill-off'); txt.textContent = `Bridge error: ${cleanError(e)}`; }
+  finally { polling = false; }
 }
 
 // ---------------------------------------------------------------- inputs
@@ -193,14 +247,8 @@ function bindInput(id, get, set, evt = 'input', after) {
 }
 // tape
 $('tapeMm').value = S.tapeMm;
-$('tapeMm').addEventListener('change', () => { S.tapeMm = Number($('tapeMm').value); saveState(); updateTapeInfo(); fitLayoutToTape(); refreshPreview(); designer.renderProps(); pollStatus(); });
+$('tapeMm').addEventListener('change', () => { S.tapeMm = Number($('tapeMm').value); saveState(); updateTapeInfo(); designer.render(); panel.refresh(); refreshPreview(); pollStatus(); });
 function updateTapeInfo() { const t = tape(S.tapeMm); $('tapeInfo').textContent = `${t.pins} dots · ${(t.pins / (180 / 25.4)).toFixed(1)} mm printable`; }
-function fitLayoutToTape() {   // keep full-height lines/boxes full height when the tape changes
-  const t = tape(S.tapeMm);
-  for (const el of layout.elements) if ((el.type === 'line' || el.type === 'rect') && el.vCenter && el.h >= (el._tapePins || t.pins) - 2) el.h = t.pins;
-  layout.elements.forEach(el => { el._tapePins = t.pins; });
-  saveLayout();
-}
 // mode
 $('modeSeg').querySelectorAll('button').forEach(b => b.onclick = () => setMode(b.dataset.mode));
 function setMode(m) {
@@ -214,17 +262,18 @@ function renderTokenHint() {
   if (S.mode === 'pattern') toks = S.pattern.segments.map(sg => `{${sg.name}}`);
   else if (S.mode === 'batch') { const v = batchValues({ text: S.batch.text, header: S.batch.header }); if (v[0]) toks = Object.keys(v[0].fields).map(k => `{${k}}`); }
   $('dzTokens').innerHTML = toks.map(t => `<code>${esc(t)}</code>`).join(' ');
-  $('tokenHint').textContent = S.mode === 'pattern' ? 'Each segment is also available in the layout as a token, e.g. {Item}. The last segment cycles fastest.' : S.mode === 'batch' ? 'Columns are available in the layout as tokens.' : '';
+  $('tokenHint').textContent = S.mode === 'pattern' ? 'Each segment is also available in the layout as a token, e.g. {Number}. The last segment cycles fastest.' : S.mode === 'batch' ? 'Columns are available in the layout as tokens.' : '';
 }
 // single
-bindInput('singleText', () => S.single.text, v => S.single.text = v);
-bindInput('singleCopies', () => S.single.copies, v => S.single.copies = v);
+bindInput('singleText', () => S.single.text, v => { S.single.text = v; });
+bindInput('singleCopies', () => S.single.copies, v => { S.single.copies = v; });
 // batch
-bindInput('batchText', () => S.batch.text, v => S.batch.text = v, 'input', () => { renderBatchSample(); renderTokenHint(); refreshPreview(); });
-bindInput('batchHeader', () => S.batch.header, v => S.batch.header = v, 'change', () => { renderBatchSample(); renderTokenHint(); refreshPreview(); });
-bindInput('batchTpl', () => S.batch.tpl, v => S.batch.tpl = v, 'input', () => { renderBatchSample(); refreshPreview(); });
+bindInput('batchText', () => S.batch.text, v => { S.batch.text = v; }, 'input', () => { renderBatchSample(); renderTokenHint(); refreshPreview(); });
+bindInput('batchHeader', () => S.batch.header, v => { S.batch.header = v; }, 'change', () => { renderBatchSample(); renderTokenHint(); refreshPreview(); });
+bindInput('batchTpl', () => S.batch.tpl, v => { S.batch.tpl = v; }, 'input', () => { renderBatchSample(); refreshPreview(); });
 $('btnBatchFile').onclick = () => $('batchFile').click();
-$('batchFile').onchange = async () => { const f = $('batchFile').files[0]; if (!f) return; S.batch.text = await f.text(); $('batchText').value = S.batch.text; $('batchFile').value = ''; saveState(); renderBatchSample(); renderTokenHint(); refreshPreview(); };
+$('batchFile').onchange = async () => { const f = $('batchFile').files[0]; if (!f) return; await loadList(f); $('batchFile').value = ''; };
+async function loadList(f) { S.batch.text = await f.text(); $('batchText').value = S.batch.text; saveState(); setMode('batch'); renderBatchSample(); renderTokenHint(); refreshPreview(); }
 function renderBatchSample() {
   const v = batchValues({ text: S.batch.text, header: S.batch.header, template: S.batch.tpl });
   $('batchSample').textContent = v.length ? `${v.length} labels\n${v.slice(0, 5).map(x => x.text).join('\n')}${v.length > 5 ? '\n…' : ''}` : 'Paste lines above.';
@@ -237,8 +286,8 @@ function renderSegments() {
   S.pattern.segments.forEach((sg, k) => {
     const row = document.createElement('div'); row.className = 'segrow';
     const vals = sg.type === 'text' ? `<input data-k="value" value="${esc(sg.value ?? '')}" placeholder="text">`
-      : sg.type === 'letters' ? `<input data-k="start" value="${esc(sg.start ?? 'AA')}" placeholder="AA" style="width:4.5em"><span class="muted">→</span><input data-k="end" value="${esc(sg.end ?? 'BZ')}" placeholder="BZ" style="width:4.5em">`
-      : `<input data-k="start" type="number" value="${sg.start ?? 1}" style="width:4em"><span class="muted">→</span><input data-k="end" type="number" value="${sg.end ?? 3}" style="width:4em"><input data-k="pad" type="number" class="pad" min="0" max="9" value="${sg.pad ?? 2}" title="zero-pad to this many digits">`;
+      : sg.type === 'letters' ? `<input data-k="start" value="${esc(sg.start ?? 'AA')}" placeholder="AA" style="width:4.5em" title="Lowercase start gives lowercase letters"><span class="muted">→</span><input data-k="end" value="${esc(sg.end ?? 'BZ')}" placeholder="BZ" style="width:4.5em">`
+      : `<input data-k="start" type="number" value="${sg.start ?? 1}" style="width:4em"><span class="muted">→</span><input data-k="end" type="number" value="${sg.end ?? 3}" style="width:4em"><input data-k="pad" type="number" class="pad" min="0" max="9" value="${sg.pad ?? 2}" title="Zero-pad to this many digits">`;
     row.innerHTML = `<input data-k="name" value="${esc(sg.name ?? '')}" placeholder="name">
       <select data-k="type"><option value="text" ${sg.type === 'text' ? 'selected' : ''}>Text</option><option value="letters" ${sg.type === 'letters' ? 'selected' : ''}>Letters</option><option value="number" ${sg.type === 'number' ? 'selected' : ''}>Numbers</option></select>
       <div class="vals">${vals}</div><button class="x" title="Remove segment">×</button>`;
@@ -246,9 +295,12 @@ function renderSegments() {
       const h = () => {
         const key = inp.dataset.k; let v = inp.value;
         if (inp.type === 'number') v = v === '' ? '' : Number(v);
-        if (key === 'type' && v !== sg.type) { sg.type = v; if (v === 'letters') { sg.start = sg.start && isNaN(sg.start) ? sg.start : 'AA'; sg.end = sg.end && isNaN(sg.end) ? sg.end : 'BZ'; } if (v === 'number') { sg.start = Number(sg.start) || 1; sg.end = Number(sg.end) || 3; sg.pad = sg.pad ?? 2; } renderSegments(); }
-        else sg[key] = v;
-        if (key === 'start' || key === 'end') { if (sg.type === 'letters') sg[key] = String(v).toUpperCase(); }
+        if (key === 'type' && v !== sg.type) {
+          sg.type = v;
+          if (v === 'letters') { sg.start = sg.start && isNaN(sg.start) ? sg.start : 'AA'; sg.end = sg.end && isNaN(sg.end) ? sg.end : 'BZ'; }
+          if (v === 'number') { sg.start = Number(sg.start) || 1; sg.end = Number(sg.end) || 3; sg.pad = sg.pad ?? 2; }
+          renderSegments();
+        } else sg[key] = v;
         saveState(); afterPatternChange();
       };
       inp.addEventListener(inp.tagName === 'SELECT' ? 'change' : 'input', h);
@@ -258,21 +310,25 @@ function renderSegments() {
   });
 }
 function afterPatternChange() {
-  const r = patternSeries({ ...S.pattern, from: 1, to: undefined });
-  const total = r.total;
+  const head = patternSeries({ ...S.pattern, from: 1, to: 1 }), total = head.total;
   if (!S.pattern.to || S.pattern.to > total) S.pattern.to = Math.min(total, Math.max(1, S.pattern.to || 3));
   if (S.pattern.from > total) S.pattern.from = 1;
-  $('patFrom').value = S.pattern.from; $('patTo').value = S.pattern.to; $('patOf').textContent = `of ${total}`;
-  const first = r.values[0]?.text ?? '', last = r.values[total - 1]?.text ?? '';
+  // never rewrite a range box while it is being typed in (clearing it to type a new number must work)
+  if (document.activeElement !== $('patFrom')) $('patFrom').value = S.pattern.from;
+  if (document.activeElement !== $('patTo')) $('patTo').value = S.pattern.to;
+  $('patOf').textContent = `of ${total}`;
+  const first = head.values[0]?.text ?? '', last = total ? patternSeries({ ...S.pattern, from: total, to: total }).values[0]?.text ?? '' : '';
   const sel = patternSeries(S.pattern).values;
-  $('patSummary').textContent = total ? `${total} labels in the series: ${first} … ${last}\nSelected ${sel.length}: ${sel.slice(0, 4).map(v => v.text).join(', ')}${sel.length > 4 ? ' …' : ''}` : 'Add a segment to build a series.';
+  $('patSummary').textContent = !total ? 'Add a segment to build a series.'
+    : `${total} labels in the series: ${first} … ${last}\n` + (sel.length ? `Selected ${sel.length}: ${sel.slice(0, 4).map(v => v.text).join(', ')}${sel.length > 4 ? ' …' : ''}` : '“From” is after “to”: nothing selected.');
   renderTokenHint(); refreshPreview();
 }
 $('segAdd').onclick = () => { S.pattern.segments.push({ name: `Part${S.pattern.segments.length + 1}`, type: 'number', start: 1, end: 9, pad: 0 }); saveState(); renderSegments(); afterPatternChange(); };
-bindInput('patSep', () => S.pattern.separator, v => S.pattern.separator = v, 'input', afterPatternChange);
-bindInput('patFrom', () => S.pattern.from, v => S.pattern.from = Math.max(1, Number(v) || 1), 'input', afterPatternChange);
-bindInput('patTo', () => S.pattern.to, v => S.pattern.to = Math.max(1, Number(v) || 1), 'input', afterPatternChange);
-$('patAll').onclick = () => { S.pattern.from = 1; S.pattern.to = patternSeries({ ...S.pattern, from: 1, to: undefined }).total; saveState(); afterPatternChange(); };
+bindInput('patSep', () => S.pattern.separator, v => { S.pattern.separator = v; }, 'input', afterPatternChange);
+bindInput('patFrom', () => S.pattern.from, v => { if (v !== '') S.pattern.from = Math.max(1, Math.floor(Number(v)) || 1); }, 'input', afterPatternChange);
+bindInput('patTo', () => S.pattern.to, v => { if (v !== '') S.pattern.to = Math.max(1, Math.floor(Number(v)) || 1); }, 'input', afterPatternChange);
+for (const id of ['patFrom', 'patTo']) $(id).addEventListener('blur', () => afterPatternChange());
+$('patAll').onclick = () => { S.pattern.from = 1; S.pattern.to = patternSeries({ ...S.pattern, from: 1, to: 1 }).total; saveState(); afterPatternChange(); };
 renderSegments();
 
 // dock
@@ -281,62 +337,230 @@ $('zoom').addEventListener('input', () => { S.zoom = Number($('zoom').value); $(
 
 // settings
 for (const [id, key, evt] of [['optAutoCut', 'autoCut', 'change'], ['optCutEach', 'cutEach'], ['optMarginMm', 'marginMm'], ['optOffset', 'offsetDots'], ['optMirror', 'mirror', 'change'], ['optFlip', 'flip', 'change'],
-  ['optCheck', 'check', 'change'], ['optMock', 'mock', 'change'], ['optMockTape', 'mockTape', 'change']])
-  bindInput(id, () => S.options[key], v => S.options[key] = v, evt || 'input', (id === 'optMarginMm') ? refreshPreview : (id === 'optMock' || id === 'optMockTape') ? pollStatus : () => {});
+  ['optCheck', 'check', 'change'], ['optMockTape', 'mockTape', 'change']])
+  bindInput(id, () => S.options[key], v => { S.options[key] = v; }, evt || 'input', (id === 'optMarginMm') ? refreshPreview : (id === 'optMockTape') ? pollStatus : () => {});
+$('optMock').checked = mock;
+$('optMock').addEventListener('change', () => { mock = $('optMock').checked; if (!config.mock) { S.options.mock = mock; saveState(); } pollStatus(); });
 $('btnSettings').onclick = () => $('settings').classList.remove('hidden');
 $('settingsClose').onclick = () => $('settings').classList.add('hidden');
 $('settings').addEventListener('click', (e) => { if (e.target === $('settings')) $('settings').classList.add('hidden'); });
 $('btnCheckUpdates').onclick = () => api.checkUpdates();
+$('dataDir').textContent = boot.userDir || boot.dir || '';
+$('btnShowData').onclick = () => (boot.userDir ? api.openPath(boot.userDir) : library.reveal());
 api.onUpdate((u) => {
   const el = $('updateTxt');
   el.textContent = u.state === 'available' ? `Update ${u.version} available${u.manual ? ' (download from GitHub)' : ', downloading…'}`
     : u.state === 'downloading' ? `Downloading update… ${u.percent}%` : u.state === 'downloaded' ? `Update ${u.version} ready. Restart to install.`
     : u.state === 'none' ? 'Up to date.' : u.state === 'error' ? `Update check failed: ${u.message}` : u.state === 'disabled' ? 'Updates are checked in packaged builds only.' : '';
 });
-api.onMenu((cmd) => { if (cmd === 'print') doPrint(); });
 
-// ---------------------------------------------------------------- designer
-const designer = new Designer({
-  canvas: $('dzCanvas'), propsEl: $('dzProps'), imageInput: $('dzImageFile'),
-  getTapeMm: () => S.tapeMm, getLayout: () => layout, getSample: sampleValue,
-  onChange: () => { saveLayout(); refreshPreview(); },
-});
-designer.zoom = S.designer.zoom; $('dzZoom').value = S.designer.zoom;
-$('dzZoom').addEventListener('input', () => { designer.zoom = S.designer.zoom = Number($('dzZoom').value); S.designer.manualZoom = true; saveState(); designer.render(); });
-/** Pick a zoom that shows the whole label in the stage (until the user moves the slider). */
-function fitDesignerZoom() {
-  if (S.designer.manualZoom) return;
-  const w = measureLabelWidth(layout, sampleValue(), S.tapeMm);
-  const avail = Math.max(200, $('dzStage').clientWidth - 48 - 60);
-  const z = Math.max(1, Math.min(12, Math.floor((avail / Math.max(1, w)) * 2) / 2));
-  if (z !== designer.zoom) { designer.zoom = S.designer.zoom = z; $('dzZoom').value = z; }
+// ---------------------------------------------------------------- layouts: library, designer, panel, undo
+const histories = new Map();     // layout id -> History, so switching layouts keeps each one's undo
+let lastSig = '';
+function hist() {
+  const key = library.id || '_';
+  let h = histories.get(key);
+  if (!h) { h = new History(); h.reset(snapshot(library.layout)); histories.set(key, h); }
+  return h;
 }
-$('dzStage').addEventListener('dblclick', () => { S.designer.manualZoom = false; fitDesignerZoom(); designer.render(); });
-document.querySelectorAll('[data-add]').forEach(b => b.onclick = () => designer.add(b.dataset.add));
+
+const library = new Library(api, {
+  onOpen: (L, id, info) => {
+    if (info.reason === 'rename' && info.oldId && histories.has(info.oldId)) { histories.set(id, histories.get(info.oldId)); histories.delete(info.oldId); }
+    if (info.reason !== 'rename') { designer.cancelDrag(); designer.selectedId = null; }
+    if (id && id !== S.layoutId) { S.layoutId = id; saveState(); }
+    const had = histories.has(id || '_');
+    lastSig = signature(L);
+    if (had && (info.reason === 'revert' || info.reason === 'external')) hist().push(snapshot(L));
+    else hist();
+    hydrateLayout(L).then(() => { if (library.layout === L) { designer.render(); panel.renderProps(); refreshPreview(); } });
+    S.designer.manualZoom = S.designer.manualZoom && info.reason === 'boot';
+    autoFitZoom(); designer.render(); panel.renderAll(); refreshPreview();
+    updatePicker(); updateUndo();
+  },
+  onList: () => updatePicker(),
+  onState: (s) => { const el = $('libState'); el.textContent = s === 'pending' ? 'Saving…' : s === 'error' ? 'Not saved' : 'Saved'; el.className = `lib-state ${s}`; },
+  toast,
+});
+
+const designer = new Designer({
+  canvas: $('dzCanvas'), stage: $('dzStage'),
+  getTapeMm: () => S.tapeMm, getLayout: () => library.layout, getSample: sampleValue,
+  onSelect: () => { panel.renderProps(); panel.renderList(); },
+  onCommit: (kind, key) => commit(kind, key, false),
+  onZoom: (z) => { S.designer.zoom = z; S.designer.manualZoom = true; $('dzZoom').value = z; saveState(); },
+  onFit: () => fitNow(),
+  onEdit: (id) => { designer.select(id); panel.focusMain(); },
+});
+designer.zoom = S.designer.zoom; designer.snap = S.designer.snap !== false;
+
+const panel = new Panel({
+  listEl: $('dzList'), layoutEl: $('dzLayout'), propsEl: $('dzProps'), designer, getLayout: () => library.layout,
+  onCommit: (kind, key) => commit(kind, key, true),
+  onRename: (name) => { if (name) library.rename(name); else panel.renderLayout(); },
+  onPickImage: (el) => pickImage(el),
+});
+
+/** An edit happened (canvas, panel, list): record it for undo, save the file, refresh the preview. */
+function commit(kind, key = null, fromPanel = false) {
+  const L = library.layout, sig = signature(L);
+  if (sig !== lastSig) {
+    lastSig = sig;
+    hist().push(snapshot(L), key);
+    library.changed();
+    refreshPreview();
+    if (kind === 'l:name') updatePicker();
+  }
+  if (!fromPanel) panel.refresh();
+  updateUndo();
+}
+function restoreSnapshot(s) {
+  const L = snapshot(s);                       // a copy, so later edits never change the history entry
+  hydrateLayout(L).then(() => { if (library.layout === L) designer.render(); });
+  library.replace(L);
+  lastSig = signature(L);
+  if (designer.selectedId && !L.elements.some(e => e.id === designer.selectedId)) designer.selectedId = null;
+  designer.render(); panel.renderAll(); refreshPreview(); updatePicker(); updateUndo();
+}
+function undo() { const s = hist().undo(); if (s) restoreSnapshot(s); }
+function redo() { const s = hist().redo(); if (s) restoreSnapshot(s); }
+function updateUndo() { const h = hist(); $('btnUndo').disabled = !h.canUndo; $('btnRedo').disabled = !h.canRedo; }
+$('btnUndo').onclick = undo;
+$('btnRedo').onclick = redo;
+
+function updatePicker() {
+  const sel = $('libSelect'), cur = library.id;
+  const opts = library.list.map(l => `<option value="${esc(l.id)}" ${l.error ? 'disabled' : ''} ${l.id === cur ? 'selected' : ''}>${esc(l.id === cur ? library.layout.name : l.name)}${l.error ? ' (unreadable file)' : ''}</option>`);
+  if (!cur || !library.list.some(l => l.id === cur)) opts.unshift(`<option value="" selected>${esc(library.layout ? library.layout.name : '—')}</option>`);
+  sel.innerHTML = opts.join('');
+  sel.title = library.dir ? `Layouts are JSON files in ${library.dir}` : '';
+  $('libMenu').querySelector('[data-lib="revert"]').disabled = !library.isPreset;
+}
+$('libSelect').onchange = () => { const id = $('libSelect').value; if (id) library.open(id); };
+$('libNew').onclick = () => libAction('new');
+const closeMenu = () => $('libMenu').classList.add('hidden');
+$('libMenuBtn').onclick = (e) => { e.stopPropagation(); $('libMenu').classList.toggle('hidden'); };
+document.addEventListener('pointerdown', (e) => { if (!e.target.closest('.menu-wrap')) closeMenu(); });
+$('libMenu').querySelectorAll('[data-lib]').forEach(b => { b.onclick = () => { closeMenu(); libAction(b.dataset.lib); }; });
+async function libAction(a) {
+  switch (a) {
+    case 'new': if (await library.createNew()) panel.focusName(); break;
+    case 'duplicate': if (await library.duplicate()) panel.focusName(); break;
+    case 'rename': panel.focusName(); break;
+    case 'revert': await library.revert(); break;
+    case 'import': await library.importFiles(); break;
+    case 'export': await library.exportCurrent(); break;
+    case 'folder': await library.reveal(); break;
+    case 'restore': await library.restoreBuiltins(); break;
+    case 'delete': await library.remove(); break;
+  }
+}
+
+// designer toolbar
+document.querySelectorAll('[data-add]').forEach(b => {
+  b.onclick = async () => {
+    if (b.dataset.add !== 'image') { designer.add(b.dataset.add); return; }
+    const r = await choosePhoto();
+    if (r) designer.add('image', r);
+  };
+});
+function choosePhoto() {
+  return new Promise((resolve) => {
+    const inp = $('dzImageFile');
+    inp.value = '';
+    inp.onchange = async () => { const f = inp.files[0]; inp.value = ''; if (!f) return resolve(null); try { resolve(await readImageFile(f)); } catch (e) { toast(e.message, true); resolve(null); } };
+    inp.oncancel = () => resolve(null);
+    inp.click();
+  });
+}
+async function pickImage(el) {
+  const r = await choosePhoto();
+  if (!r) return;
+  el.src = r.src; el._img = r.img;
+  designer.render(); commit('photo');
+}
+$('dzSnap').checked = designer.snap;
+$('dzSnap').addEventListener('change', () => { designer.snap = S.designer.snap = $('dzSnap').checked; saveState(); });
+$('dzZoom').value = S.designer.zoom;
+$('dzZoom').addEventListener('input', () => { designer.setZoom(Number($('dzZoom').value)); S.designer.zoom = designer.zoom; S.designer.manualZoom = true; saveState(); });
+$('dzFit').onclick = () => fitNow();
+/** Show the whole label in the designer (until the zoom slider is moved). */
+function autoFitZoom() {
+  if (S.designer.manualZoom) return;
+  const z = designer.fitZoom();
+  if (z !== designer.zoom) { designer.zoom = z; $('dzZoom').value = z; }
+}
+function fitNow() { S.designer.manualZoom = false; saveState(); autoFitZoom(); designer.redraw(); }
 const fl = document.createElement('datalist'); fl.id = 'fontList'; FONTS.forEach(f => { const o = document.createElement('option'); o.value = f; fl.appendChild(o); }); document.body.appendChild(fl);
-function refreshTplList() { const sel = $('tplList'); sel.innerHTML = '<option value="">Layouts…</option>' + Object.keys(templates()).sort().map(n => `<option>${esc(n)}</option>`).join(''); }
-refreshTplList();
-async function useLayout(l, name) { layout = l; await hydrateLayout(layout); $('tplName').value = name ?? (layout.name || ''); designer.selectedId = null; fitLayoutToTape(); designer.render(); designer.renderProps(); saveLayout(); refreshPreview(); }
-$('tplSave').onclick = () => { const name = $('tplName').value.trim() || layout.name || 'Untitled'; const t = templates(); layout.name = name; t[name] = JSON.parse(serializeLayout(layout)); saveTemplates(t); refreshTplList(); $('tplList').value = name; toast(`Saved layout “${name}”`); };
-$('tplList').onchange = () => { const name = $('tplList').value; const t = templates(); if (name && t[name]) useLayout(structuredClone(t[name]), name); };
-$('tplDelete').onclick = () => { const name = $('tplList').value; if (!name) return; const t = templates(); delete t[name]; saveTemplates(t); refreshTplList(); toast(`Deleted “${name}”`); };
-$('tplExport').onclick = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([serializeLayout(layout)], { type: 'application/json' })); a.download = `${(layout.name || 'layout').replace(/[^\w-]+/g, '_')}.tapedeck.json`; a.click(); };
-$('tplImport').onclick = () => $('tplImportFile').click();
-$('tplImportFile').onchange = async () => { const f = $('tplImportFile').files[0]; $('tplImportFile').value = ''; if (!f) return; try { const j = JSON.parse(await f.text()); if (!j.elements) throw new Error('not a layout'); await useLayout(j); toast('Layout imported'); } catch (e) { toast(`Import failed: ${e.message}`, true); } };
-function builtLayout() { values = computeValues(); return S.wrap ? wrapLayout(S.tapeMm, longest(values) || 'UM-052-C') : plainLayout(S.tapeMm); }
-$('tplReset').onclick = () => { S.designer.manualZoom = false; useLayout(builtLayout(), ''); };
-$('optWrap').checked = S.wrap;
-$('optWrap').addEventListener('change', () => { S.wrap = $('optWrap').checked; saveState(); S.designer.manualZoom = false; useLayout(builtLayout(), ''); });
+window.addEventListener('resize', debounce(() => { autoFitZoom(); designer.redraw(); }, 150));
+
+// keyboard: the designer gets keys after a click in the layout card, unless a field has focus
+let designerActive = false;
+document.addEventListener('pointerdown', (e) => { designerActive = !!e.target.closest('#cardLayout'); }, true);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('libMenu').classList.contains('hidden')) { closeMenu(); return; }
+  if (!$('theater').classList.contains('hidden') || !$('settings').classList.contains('hidden')) return;
+  if (e.target.closest && e.target.closest('input, textarea, select, [contenteditable]')) return;
+  if (designerActive && designer.key(e)) e.preventDefault();
+});
+const isTextField = (t) => t && (t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && !['checkbox', 'radio', 'range', 'button', 'file'].includes(t.type)));
+api.onMenu((cmd) => {
+  if (cmd === 'undo' || cmd === 'redo') {
+    if (isTextField(document.activeElement)) api.nativeEdit(cmd);     // typing in a field: undo the typing
+    else if (cmd === 'undo') undo(); else redo();
+    return;
+  }
+  if (cmd === 'print') doPrint();
+  else if (cmd === 'layout-new') libAction('new');
+  else if (cmd === 'layout-duplicate') libAction('duplicate');
+  else if (cmd === 'layout-import') libAction('import');
+  else if (cmd === 'layout-export') libAction('export');
+});
+
+// drop a photo on the label, a layout .json to import it, or a CSV/TXT list to print from
+document.addEventListener('dragover', (e) => { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; $('dzStage').classList.toggle('drop', !!(e.target.closest && e.target.closest('#dzStage'))); });
+document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) $('dzStage').classList.remove('drop'); });
+document.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  $('dzStage').classList.remove('drop');
+  const onStage = !!(e.target.closest && e.target.closest('#dzStage'));
+  for (const f of [...((e.dataTransfer && e.dataTransfer.files) || [])]) {
+    try {
+      if (/\.json$/i.test(f.name)) await library.importText(await f.text(), f.name);
+      else if (/^image\//.test(f.type)) { const r = await readImageFile(f); designer.add('image', { ...r, slot: onStage ? designer.slotAt(e.clientX) : null }); }
+      else if (/\.(csv|tsv|txt)$/i.test(f.name)) { await loadList(f); toast(`Loaded ${f.name} into the List.`); }
+      else toast(`${f.name}: drop a photo, a CSV/TXT list or a layout .json file.`, true);
+    } catch (err) { toast(`${f.name}: ${err.message}`, true); }
+  }
+});
+
+// pick up layout files edited, added or removed outside the app; save everything before the window goes away
+window.addEventListener('focus', () => { library.refreshFromDisk(); });
+window.addEventListener('beforeunload', () => {
+  const payload = {};
+  if (settingsDirty) payload.settings = S;
+  const lay = library.pendingSync();
+  if (lay) payload.layout = lay;
+  if (payload.settings || payload.layout) { try { api.flushSync(payload); } catch {} }
+});
+
+/** First run of 0.2: named layouts saved by 0.1 (localStorage) become layout files. */
+async function migrateOldTemplates() {
+  let t;
+  try { t = JSON.parse(localStorage.getItem('tapedeck.templates') || 'null'); } catch { t = null; }
+  if (!t || typeof t !== 'object') return;
+  let n = 0;
+  for (const [name, j] of Object.entries(t)) {
+    try { const L = fromFile(j); delete L._warnings; L.name = library.uniqueName(name); await api.layouts.create(L.name, toFileText(L)); n++; }
+    catch (e) { console.warn('could not migrate layout', name, e); }
+  }
+  if (n) { await library.refreshList(); toast(`Moved ${n} saved layout${n === 1 ? '' : 's'} into the layouts folder.`); }
+}
 
 // ---------------------------------------------------------------- boot
-(async () => {
-  try { config = await api.config(); if (config.mock) { S.options.mock = true; $('optMock').checked = true; } $('verTxt').textContent = `TapeDeck ${config.version}${config.packaged ? '' : ' (dev)'}`; } catch (e) { toast(`Startup error: ${e.message}`, true, 0); }
-  values = computeValues();
-  if (!layout) layout = S.wrap ? wrapLayout(S.tapeMm, longest(patternSeries({ ...S.pattern, from: 1, to: undefined }).values) || 'UM-052-C') : plainLayout(S.tapeMm);
-  await hydrateLayout(layout); saveLayout();
-  $('tplName').value = layout.name || '';
-  updateTapeInfo(); setMode(S.mode); afterPatternChange();
-  fitDesignerZoom(); designer.render(); designer.renderProps();
-  pollStatus(); setInterval(pollStatus, 8000);
-  document.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'p') { e.preventDefault(); doPrint(); } });
-})();
+library.init(boot);
+$('verTxt').textContent = `TapeDeck ${config.version}${config.packaged ? '' : ' (dev)'}`;
+updateTapeInfo(); setMode(S.mode); afterPatternChange();
+pollStatus(); setInterval(pollStatus, 8000);
+if (firstRun) { saveState(); migrateOldTemplates(); }
+if (config.test) window.__tapedeck = { designer, panel, library, S, hist };   // automated UI tests only

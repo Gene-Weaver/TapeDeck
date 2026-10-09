@@ -1,0 +1,19 @@
+{
+  "format": "tapedeck-layout",
+  "version": 2,
+  "name": "Label wrap",
+  "description": "QR, name, 10 mm fold box, name, QR on one piece. Wrap it around a rod at the black box so the label sticks to itself and reads from both sides.",
+  "units": { "length": "mm", "fontSize": "pt" },
+  "length": { "mode": "auto", "fixed": 40 },
+  "padding": 0.5,
+  "gap": 1.25,
+  "justify": "start",
+  "border": false,
+  "elements": [
+    { "type": "qr", "name": "QR", "text": "{text}", "fullHeight": true, "ecc": "M", "quiet": 0, "vCenter": true },
+    { "type": "text", "name": "Name", "text": "{text}", "font": "Helvetica", "autoSize": true, "bold": true, "italic": false, "align": "center", "widthMode": "series", "lineHeight": 1.15, "invert": false, "vCenter": true },
+    { "type": "rect", "name": "Fold box", "w": 10, "fullHeight": true, "stroke": 0.14, "radius": 0, "fill": true, "spaceBefore": 0.6, "spaceAfter": 0.6, "vCenter": true },
+    { "type": "text", "name": "Name (back)", "text": "{text}", "font": "Helvetica", "autoSize": true, "bold": true, "italic": false, "align": "center", "widthMode": "series", "lineHeight": 1.15, "invert": false, "vCenter": true },
+    { "type": "qr", "name": "QR (back)", "text": "{text}", "fullHeight": true, "ecc": "M", "quiet": 0, "vCenter": true }
+  ]
+}

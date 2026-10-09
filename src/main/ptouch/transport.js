@@ -34,26 +34,18 @@ class UsbTransport {
       this.epOut.timeout = timeoutMs; this.epIn.timeout = timeoutMs;
     } catch (e) { try { dev.close(); } catch {} throw new TransportError(accessHint(e)); }
   }
-  async write(data) {
-    const buf = Buffer.from(data.buffer ? data : Buffer.from(data));
-    const CHUNK = 16 * 1024;
-    for (let i = 0; i < buf.length; i += CHUNK) {
-      const slice = buf.subarray(i, i + CHUNK);
-      try {
-        await new Promise((res, rej) => this.epOut.transfer(slice, (err) => err ? rej(err) : res()));
-      } catch (err) {
-        if (!isTimeout(err, this.usb)) throw err;
-        await this._recover();
-        try { await new Promise((res, rej) => this.epOut.transfer(slice, (e2) => e2 ? rej(e2) : res())); }
-        catch (e2) { throw new TransportError('The printer stopped accepting data (USB write timed out) and did not recover. Switch the PT-P700 off and on again, check that the P-Lite light is off, then retry.'); }
-      }
-    }
-  }
-  /** Clear endpoint halts and reset the device; the printer may still need a power cycle. */
-  async _recover() {
-    const ch = (ep) => new Promise(r => { try { ep.clearHalt(() => r()); } catch { r(); } });
-    await ch(this.epOut); await ch(this.epIn);
-    await new Promise(r => { try { this.dev.reset(() => r()); } catch { r(); } });
+  /**
+   * opts.timeoutMs: per USB transfer. opts.stallMs: during a print job, how long the printer may hold
+   * off data before we give up (0 = fail on the first timeout). opts.lastActivity(): time of the
+   * printer's last status message, which also counts as a sign of life.
+   */
+  write(data, opts = {}) {
+    const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+    const transfer = (slice, timeoutMs) => new Promise((res) => {
+      this.epOut.timeout = timeoutMs;
+      this.epOut.transfer(slice, (error, actual) => res({ error, actual: actual || 0 }));
+    });
+    return sendPaced(transfer, buf, { timeoutMs: opts.timeoutMs || this.timeoutMs, stallMs: opts.stallMs || 0, lastActivity: opts.lastActivity, isTimeout: (e) => isTimeout(e, this.usb) });
   }
   read(n = 32, timeoutMs) {
     this.epIn.timeout = timeoutMs || this.timeoutMs;
@@ -70,6 +62,49 @@ class UsbTransport {
 
 function isTimeout(err, usb) {
   return /timed?[ _]?out/i.test(String(err && (err.message || err.errno))) || (usb && (err.errno === usb.LIBUSB_TRANSFER_TIMED_OUT || err.errno === usb.LIBUSB_ERROR_TIMEOUT));
+}
+
+/** The printer was unplugged or switched off (as opposed to a transfer that merely failed). */
+function isGone(err) { return /NO_DEVICE|NOT_FOUND|disconnected/i.test(String(err && (err.message || err.errno))) || (err && err.errno === -4); }
+
+const CHUNK = 16 * 1024;
+const STALLED = (s) => `The printer stopped taking data for ${Math.round(s / 1000)} s. Check it for a jam, an empty cassette or an error light; if it does not respond, switch it off and on, then print again.`;
+const NOT_ACCEPTED = 'The printer did not accept data (USB write timed out). Switch the PT-P700 off and on, check that the P-Lite light is off, then retry.';
+
+/**
+ * Send `buf` with transfer(slice, timeoutMs) -> Promise<{ error, actual }>, where `actual` is how many
+ * bytes the printer accepted, even when the transfer timed out.
+ *
+ * While it prints, the PT-P700 holds off further data (USB NAKs) until it has room, which can take
+ * longer than a transfer timeout when labels are long. So a timeout during a job means "busy", not
+ * "stuck": carry on from the first byte the printer has not taken. Never resend accepted bytes (a
+ * repeated raster line corrupts the job and desyncs the printer until a power cycle) and never reset
+ * the device mid-job (that aborts the print and re-enumerates the printer). Give up only when neither
+ * the transfer nor the printer's status messages have shown progress for `stallMs`.
+ */
+async function sendPaced(transfer, buf, { timeoutMs = 5000, stallMs = 0, lastActivity = null, isTimeout: timedOut = (e) => isTimeout(e) } = {}) {
+  let off = 0, progress = Date.now();
+  while (off < buf.length) {
+    const slice = buf.subarray(off, off + CHUNK);
+    const { error, actual } = await transfer(slice, timeoutMs);
+    if (actual > 0) { off += actual; progress = Date.now(); }
+    if (!error) {
+      if (actual <= 0) throw new TransportError('The printer accepted no data.');
+      continue;
+    }
+    if (!timedOut(error)) throw error;
+    if (!stallMs) throw new TransportError(NOT_ACCEPTED);
+    const last = Math.max(progress, lastActivity ? lastActivity() : 0);
+    if (Date.now() - last >= stallMs) throw new TransportError(STALLED(stallMs));
+  }
+}
+
+/** Plain-language text for a libusb failure in the middle of a conversation with the printer. */
+function describeUsbError(e) {
+  const m = String(e && e.message || e);
+  if (isGone(e)) return `The printer disconnected (${m}). Check the USB cable and that it is switched on, then print again.`;
+  if (/^LIBUSB_|LIBUSB_ERROR/.test(m)) return `USB communication with the printer failed (${m}). If the printer does not respond, switch it off and on, then try again.`;
+  return m;
 }
 
 function accessHint(e) {
@@ -100,10 +135,13 @@ class MockTransport {
       else if (b === 0x0c || b === 0x1a) {
         const lines = this.linesInPage; this.linesInPage = 0; this.pagesPrinted++;
         console.log(`[mock] page ${this.pagesPrinted}: ${lines} raster lines, ${this.inkLines || 0} with ink`); this.inkLines = 0;
-        if (this.realtime) { const mm = lines / 7.0866 + 4; await sleep(Math.min(6000, (mm / 20) * 1000)); }
         this.pending.push(fakeStatus({ widthMm: this.tapeMm, statusType: 0x06, phaseType: 0x01 }));
+        if (this.realtime) {   // like a real PT-P700: 17.4 mm/s plus a 1 s cut per page; the last page then feeds 24.5 mm and cuts again
+          const mm = lines / 7.0866 + 4;
+          await sleep((mm / 17.4 + 1.0 + (b === 0x1a ? 24.5 / 17.4 + 1.0 : 0)) * 1000);
+        }
         this.pending.push(fakeStatus({ widthMm: this.tapeMm, statusType: 0x01 }));
-        this.pending.push(fakeStatus({ widthMm: this.tapeMm, statusType: 0x06, phaseType: 0x00 }));
+        if (b === 0x1a) this.pending.push(fakeStatus({ widthMm: this.tapeMm, statusType: 0x06, phaseType: 0x00 }));
         i += 1;
       }
       else if (b === 0x1b && d[i + 1] === 0x69 && i + 2 < d.length) { i += ({ 0x7a: 13, 0x4d: 4, 0x4b: 4, 0x41: 4, 0x64: 5, 0x61: 4, 0x21: 4 })[d[i + 2]] || 3; }
@@ -115,4 +153,4 @@ class MockTransport {
 }
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-module.exports = { UsbTransport, MockTransport, TransportError, VENDOR_ID, PRODUCT_ID, PLITE_PRODUCT_ID };
+module.exports = { UsbTransport, MockTransport, TransportError, sendPaced, isGone, describeUsbError, VENDOR_ID, PRODUCT_ID, PLITE_PRODUCT_ID };

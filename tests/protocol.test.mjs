@@ -115,7 +115,7 @@ test('mock rejects wrong tape', async () => {
 });
 
 test('job manager runs a mock job and reports progress', async () => {
-  const jm = new JobManager(); const tape = tapeForMm(9);
+  const jm = new JobManager({ mockOptions: { realtime: false } }); const tape = tapeForMm(9);
   const pages = [{ width: 20, height: tape.pins, pixels: new Uint8Array(20 * tape.pins) }, { width: 20, height: tape.pins, pixels: new Uint8Array(20 * tape.pins) }];
   const seen = [];
   const job = jm.start({ pages, names: ['a', 'b'], options: { tapeMm: 9 }, mock: true, mockTape: 9 }, (j) => seen.push(j.state + ':' + j.printed));
@@ -123,4 +123,27 @@ test('job manager runs a mock job and reports progress', async () => {
   for (let i = 0; i < 100 && jm.busy; i++) await new Promise(r => setTimeout(r, 50));
   assert.equal(jm.get(job.id).state, 'done'); assert.equal(jm.get(job.id).printed, 2);
   assert.ok(seen.includes('done:2'));
+});
+
+test('jobs run under the USB lock, so a status poll waits for a running job', async () => {
+  let chain = Promise.resolve();
+  const lock = (fn) => { const run = chain.then(fn, fn); chain = run.catch(() => {}); return run; };
+  const jm = new JobManager({ lock, mockOptions: { realtime: false } }); const tape = tapeForMm(6);
+  const order = [];
+  const pages = [{ width: 10, height: tape.pins, pixels: new Uint8Array(10 * tape.pins) }];
+  jm.start({ pages, names: ['a'], options: { tapeMm: 6 }, mock: true, mockTape: 6 }, (j) => { if (j.state === 'done') order.push('job done'); });
+  assert.equal(jm.busy, true);
+  await lock(async () => { order.push('status poll'); });
+  assert.deepEqual(order, ['job done', 'status poll']);
+  assert.equal(jm.busy, false);
+  await assert.rejects(Promise.resolve().then(() => { jm.current = { id: 'x' }; return jm.feedAndCut({ tapeMm: 6, mock: true }); }), /already running/);
+});
+
+test('job history is pruned', async () => {
+  const jm = new JobManager({ mockOptions: { realtime: false } }); const tape = tapeForMm(6);
+  for (let i = 0; i < 25; i++) {
+    jm.start({ pages: [{ width: 4, height: tape.pins, pixels: new Uint8Array(4 * tape.pins) }], names: [''], options: { tapeMm: 6, checkMedia: false }, mock: true, mockTape: 6 });
+    while (jm.busy) await new Promise(r => setTimeout(r, 5));
+  }
+  assert.ok(jm.jobs.size <= 21);
 });

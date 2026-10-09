@@ -156,21 +156,45 @@ export function segmentValues(seg) {
  * Returns { values, total } where values are the [from..to] slice (1-based, inclusive) of the series.
  * Each value: { text, n (1-based position in the series), i (1-based within the slice), fields: {name: part} }.
  */
-export function patternSeries(pattern) {
+function seriesOf(pattern) {
   const segs = (pattern.segments || []).filter(Boolean);
   const lists = segs.map(segmentValues);
   const total = lists.reduce((p, l) => p * l.length, segs.length ? 1 : 0);
-  const from = Math.max(1, Math.floor(Number(pattern.from) || 1));
-  const to = Math.min(total, Math.floor(Number(pattern.to) || total));
   const sep = pattern.separator ?? '-';
-  const values = [];
-  for (let n = from; n <= to; n++) {
+  /** The n-th value (1-based) of the series. */
+  const at = (n, from = 1) => {
     let rem = n - 1; const parts = new Array(lists.length);
     for (let s = lists.length - 1; s >= 0; s--) { const L = lists[s].length; parts[s] = lists[s][rem % L]; rem = Math.floor(rem / L); }
     const fields = {}; segs.forEach((sg, k) => { fields[sg.name || `s${k + 1}`] = parts[k]; });
-    values.push({ text: parts.join(sep), n, i: n - from + 1, fields });
-  }
+    return { text: parts.join(sep), n, i: n - from + 1, fields };
+  };
+  return { total, at };
+}
+
+export function patternSeries(pattern) {
+  const { total, at } = seriesOf(pattern);
+  const from = Math.max(1, Math.floor(Number(pattern.from) || 1));
+  const to = Math.min(total, Math.floor(Number(pattern.to) || total));
+  const values = [];
+  for (let n = from; n <= to; n++) values.push(at(n, from));
   return { values, total, from, to };
+}
+
+/** Up to `max` values spread evenly over the whole series (ignoring the print range), for measuring text widths. */
+export function patternSample(pattern, max = 4000) {
+  const { total, at } = seriesOf(pattern);
+  if (total <= max) return Array.from({ length: total }, (_, k) => at(k + 1));
+  const out = [];
+  for (let k = 0; k < max; k++) out.push(at(1 + Math.round(k * (total - 1) / (max - 1))));
+  return out;
+}
+
+/** Up to `max` items of a list spread evenly over it (always including the first and last). */
+export function spread(list, max = 4000) {
+  if (list.length <= max) return list;
+  const out = [];
+  for (let k = 0; k < max; k++) out.push(list[Math.round(k * (list.length - 1) / (max - 1))]);
+  return out;
 }
 
 export function defaultPattern() {

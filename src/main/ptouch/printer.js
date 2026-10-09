@@ -3,7 +3,7 @@
 const P = require('./protocol');
 const { parseStatus } = require('./status');
 const { tapeForMm } = require('./tapes');
-const { UsbTransport, MockTransport } = require('./transport');
+const { UsbTransport, MockTransport, isGone } = require('./transport');
 
 class PrintError extends Error {}
 
@@ -34,6 +34,10 @@ class Printer {
    */
   async printPages(pages, options, progress, cancel) {
     if (!pages.length) return 0;
+    // A one-line timeline of the job (pages sent, the printer's status messages) goes to the log, so
+    // the print animation can be matched to how the real printer paces itself.
+    const t0 = Date.now(), timeline = [];
+    const mark = (what) => timeline.push(`${what} +${((Date.now() - t0) / 1000).toFixed(2)}`);
     const tape = tapeForMm(options.tapeMm, options.offsetDots || 0);
     let mediaType = null;
     if (options.checkMedia !== false) {
@@ -42,32 +46,50 @@ class Printer {
       if (!st.hasMedia) throw new PrintError('No tape cassette detected');
       if (st.mediaWidthMm !== tape.key) throw new PrintError(`Loaded tape is ${st.mediaWidthMm} mm but the job was designed for ${tape.label}. Change the tape width in the app or swap the cassette.`);
       mediaType = st.mediaTypeCode;
+      mark('status ok');
     }
     const rasterPages = pages.map(p => P.pixelsToRasterLines(p.pixels, p.width, p.height, tape, !!options.flip));
     const chunks = P.buildJob(rasterPages, tape, { autoCut: options.autoCut !== false, cutEach: options.cutEach || 1, mirror: !!options.mirror, marginDots: options.marginDots ?? 14, mediaType, chain: options.chain === true });
     const total = pages.length;
     let sent = 0, done = 0, readerErr = null, active = true, lastActivity = Date.now();
+    this.warning = null;
+    // Progress comes from the printer's status messages. A failed read only costs progress reports,
+    // so it never stops the job by itself; an unplugged printer or a reported printer error does.
     const reader = (async () => {
+      let failures = 0;
       while (active) {
         let buf;
-        try { buf = await this.t.read(32, 500); } catch (e) { readerErr = e; break; }
+        try { buf = await this.t.read(32, 500); failures = 0; }
+        catch (e) {
+          if (isGone(e)) { readerErr = e; break; }
+          if (++failures >= 5) { this.warning = `The printer stopped sending progress reports (${e.message || e}); the labels were still sent.`; break; }
+          await new Promise(r => setTimeout(r, 200));
+          continue;
+        }
         if (!buf.length) { await new Promise(r => setTimeout(r, 25)); continue; }   // yield (mock reads return instantly)
         if (buf.length >= 32 && buf[0] === 0x80) {
           lastActivity = Date.now();
           let st; try { st = parseStatus(buf); } catch { continue; }
+          if (st.statusTypeCode === 0x06) {
+            mark(st.phaseType === 0x01 ? 'printing state' : `editing state`);
+            if (st.phaseType === 0x01) progress && progress(done, total, 'moving');
+          } else mark(st.statusTypeCode === 0x01 ? 'completed' : `status 0x${st.statusTypeCode.toString(16)}${st.errors.length ? ` (${st.errors.join(', ')})` : ''}`);
           if (st.errors.length) { readerErr = new PrintError('Printer error during job: ' + st.errors.join(', ')); break; }
           if (st.statusTypeCode === 0x01 && done < total) { done++; progress && progress(done - 1, total, 'done'); }
         }
       }
     })();
+    // The printer takes data only as fast as it prints: wait for it as long as it shows signs of life.
+    const paced = { timeoutMs: 10000, stallMs: 60000, lastActivity: () => lastActivity };
     try {
-      await this.t.write(chunks[0]);
+      await this.t.write(chunks[0], paced);
       for (let i = 0; i < total; i++) {
         if (readerErr) throw readerErr;
         if (cancel && cancel()) break;
         progress && progress(i, total, 'sending');
-        await this.t.write(chunks[i + 1]);
+        await this.t.write(chunks[i + 1], paced);
         sent++; lastActivity = Date.now();
+        mark(`page ${i + 1} sent`);
         progress && progress(i, total, 'printing');
       }
       // wait for the printer to report every sent page, with a generous per-page budget
@@ -83,6 +105,8 @@ class Printer {
     } finally {
       active = false;
       await reader.catch(() => {});
+      mark('end');
+      console.log(`[timing] ${total} page${total === 1 ? '' : 's'}: ${timeline.join(', ')}`);
     }
   }
 

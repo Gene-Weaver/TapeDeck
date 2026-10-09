@@ -1,0 +1,15 @@
+{
+  "format": "tapedeck-layout",
+  "version": 2,
+  "name": "Plain",
+  "description": "Just the name, centered, as long as it needs to be.",
+  "units": { "length": "mm", "fontSize": "pt" },
+  "length": { "mode": "auto", "fixed": 30 },
+  "padding": 0.85,
+  "gap": 1.25,
+  "justify": "center",
+  "border": false,
+  "elements": [
+    { "type": "text", "name": "Name", "text": "{text}", "font": "Helvetica", "autoSize": true, "bold": true, "italic": false, "align": "center", "widthMode": "auto", "lineHeight": 1.15, "invert": false, "vCenter": true }
+  ]
+}

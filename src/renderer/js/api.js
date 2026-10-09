@@ -2,8 +2,15 @@
 const bridge = window.tapedeck;
 if (!bridge) throw new Error('TapeDeck must run inside the Electron app (preload bridge missing).');
 
+// Errors thrown in the main process arrive as "Error invoking remote method 'x': Error: message".
+export const cleanError = (e) => String((e && e.message) || e).replace(/^Error invoking remote method '[^']+': (\w*Error: )?/, '');
+
 export const api = {
+  boot: () => bridge.boot(),
+  flushSync: (payload) => bridge.flushSync(payload),
   config: () => bridge.config(),
+  saveSettings: (s) => bridge.saveSettings(s),
+  layouts: bridge.layouts,
   status: (opts) => bridge.status(opts),
   print: (body) => bridge.print(body),
   job: (id) => bridge.job(id),
@@ -12,6 +19,7 @@ export const api = {
   exportPngs: (body) => bridge.exportPngs(body),
   openExternal: (url) => bridge.openExternal(url),
   openPath: (p) => bridge.openPath(p),
+  nativeEdit: (cmd) => bridge.nativeEdit(cmd),
   checkUpdates: () => bridge.checkUpdates(),
   installUpdate: () => bridge.installUpdate(),
   onJobProgress: (cb) => bridge.onJobProgress(cb),

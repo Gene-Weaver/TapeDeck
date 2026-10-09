@@ -1,7 +1,15 @@
 // The print theater: a PT-P700 drawn in a three-axis projection. Labels leave the slot flat,
 // in line with the printer's depth axis, curl up to face the viewer, run to the right, and after
 // the cut drop into a translucent bin where the stack builds up with the newest label on top.
-import { dotsToMm, FEED_MM_PER_S } from './tape.js';
+//
+// Timing follows the real printer: the tape runs on a clock at the printer's speed (PRINT in tape.js),
+// starting when the printer reports it is moving. Out come the blank lead piece, then each label with
+// its feed margins, with a short stop at every cut. The printer's "label printed" reports keep the clock
+// honest: it catches up when it is behind, waits at a cut when it is ahead, and the measured gaps
+// between reports correct the speed. When the job ends, whatever is left plays out quickly.
+import { DOTS_PER_MM, PRINT } from './tape.js';
+
+const HOLD_MAX_MS = 2500;    // longest the tape waits at a cut for the printer to report that label
 
 // ---- projection ---------------------------------------------------------------------------
 const norm = (x, y) => { const l = Math.hypot(x, y); return [x / l, y / l]; };
@@ -118,80 +126,157 @@ export class PrintTheater {
   }
 
   // ---- lifecycle ------------------------------------------------------------------------
-  open({ labels, tapeMm, tapeLabel, onCancel }) {
-    this.labels = labels; this.tapeMm = tapeMm;
+  /** marginMm: feed margin at each end of a label; mmPerS: the printer's speed (measured on earlier jobs if known). */
+  open({ labels, tapeMm, tapeLabel, onCancel, marginMm = 2, mmPerS = PRINT.mmPerS, onSpeed = null }) {
+    this.labels = labels; this.tapeMm = tapeMm; this.onSpeed = onSpeed;
     const pins = labels[0]?.height || 32;
-    const longest = Math.max(...labels.map(l => l.width));
+    const margin = Math.round(Math.max(0, marginMm) * DOTS_PER_MM);
+    // what physically leaves the slot: the blank lead piece, then each label with its feed margins
+    this.pieces = [{ kind: 'leader', canvas: blankTape(Math.round(PRINT.leaderMm * DOTS_PER_MM), pins) },
+      ...labels.map((l, i) => ({ kind: 'label', i, canvas: withMargins(l.canvas, margin, pins) }))];
+    this.ends = [];
+    let acc = 0;
+    for (const p of this.pieces) { p.mm = p.canvas.width / DOTS_PER_MM; acc += p.mm; this.ends.push(acc); }
+    this.totalMm = acc;
+    const longest = Math.max(...this.pieces.map(p => p.canvas.width));
     const pathAvail = (BIN.x + BIN.w - 10) - EXIT[0] - PATH.flat - PATH.bend * 0.6;
     this.labelScale = Math.max(0.3, Math.min(1.6, 70 / pins, pathAvail / longest));
     this.drawPrinter(tapeLabel, Math.round(pins * this.labelScale));
     this.blade.style.top = `${EXIT[1] - (pins * this.labelScale) / 2 - 40}px`;
     this.pile.innerHTML = ''; this.labelOut.innerHTML = ''; this.list.innerHTML = '';
-    this.status.textContent = 'Sending job…'; this.status.classList.remove('err');
+    this.status.textContent = 'Sending the job…'; this.status.classList.remove('err');
     this.bar.style.width = '0%';
     this.title.textContent = 'Printing'; this.sub.textContent = `${labels.length} label${labels.length === 1 ? '' : 's'} on ${tapeLabel}`;
     this.btnCancel.classList.remove('hidden'); this.btnClose.classList.add('hidden'); this.btnFeedCut.classList.add('hidden');
     this.btnCancel.onclick = onCancel;
     this.root.classList.remove('hidden');
-    this.job = { state: 'queued', index: 0, printed: 0, phase: '' }; this.chain = false; this.waiters = [];
     labels.forEach((l, i) => { const sp = document.createElement('span'); sp.textContent = l.name || `#${i + 1}`; sp.dataset.i = i; this.list.appendChild(sp); });
-    this.run = ++this._runId || (this._runId = 1);
-    this._drive(this.run);
+    this.job = { state: 'queued', index: 0, printed: 0, phase: '', sentAt: [], doneAt: [] }; this.chain = false;
+    this.v = Math.max(8, Math.min(80, mmPerS || PRINT.mmPerS)); this.speeds = []; this.freeRun = false;
+    this.st = { mode: 'wait', k: 0, d: 0, cutEnd: 0, holdSince: 0 };
+    this.cur = null;
+    if (this.raf) cancelAnimationFrame(this.raf);
+    const run = this.run = (this._runId = (this._runId || 0) + 1);
+    this.lastNow = performance.now();
+    const loop = (now) => { if (this.run !== run) return; this._tick(now); if (this.st.mode !== 'stopped') this.raf = requestAnimationFrame(loop); };
+    this.raf = requestAnimationFrame(loop);
   }
 
   close() { this.root.classList.add('hidden'); this.scene.classList.remove('printing'); this.run = -1; if (this.raf) cancelAnimationFrame(this.raf); }
 
-  /** Called with every job update from the main process; the driver loop reacts to it. */
+  /** Called with every job update from the main process. */
   update(job, { chain = false } = {}) {
+    const before = (this.job.doneAt || []).length;
     this.job = job; this.chain = chain;
-    const n = this.labels.length;
-    this.bar.style.width = `${(job.printed / n) * 100}%`;
-    if (job.state === 'printing') { const cur = this.labels[Math.min(job.index, n - 1)]; this.status.textContent = `Label ${Math.min(job.index + 1, n)} / ${n}  ·  ${cur ? cur.name : ''}  ·  ${job.phase}`; }
-    for (const w of this.waiters.splice(0)) w();
-  }
-
-  _terminal() { return ['done', 'error', 'cancelled'].includes(this.job.state); }
-  _until(pred) { return new Promise((res) => { const check = () => { if (pred() || this._terminal()) res(); else this.waiters.push(check); }; check(); }); }
-
-  /** Strictly sequential: label k emerges only after label k-1 was cut, however far ahead the job is. */
-  async _drive(run) {
-    const n = this.labels.length;
-    for (let k = 0; k < n && this.run === run; k++) {
-      await this._until(() => this.job.printed > k || (this.job.index >= k && this.job.state === 'printing'));
-      if (this.run !== run) return;
-      if (this._terminal() && this.job.printed <= k) break;           // job ended before this label started
-      this.scene.classList.add('printing');
-      await this._animateStart(k);
-      if (this.run !== run) return;
-      await this._until(() => this.job.printed > k);
-      if (this.run !== run) return;
-      if (this.job.printed <= k) break;                                // error/cancel while this label was out
-      const isLast = k === n - 1;
-      if (!(this.chain && isLast)) await this._animateCut(k);
+    // Speed from the gaps between consecutive "label printed" reports. That gap is one label plus a cut,
+    // whatever point of the tape path the printer reports from. The last report also includes the
+    // final feed to the cutter, so it is left out.
+    const done = job.doneAt || [];
+    for (let i = Math.max(1, before); i < done.length && i < this.labels.length - 1; i++) {
+      if (done[i] == null || done[i - 1] == null) continue;
+      const secs = (done[i] - done[i - 1]) / 1000 - PRINT.cutS, v = this.pieces[i + 1].mm / secs;
+      if (secs > 0.2 && v >= 8 && v <= 80) { this.speeds.push(v); this.v = this.v * 0.4 + v * 0.6; }
     }
-    if (this.run !== run) return;
-    await this._until(() => false);                                    // wait for the terminal state
-    const j = this.job;
-    if (j.state === 'done') this.status.textContent = this.chain ? `Done. ${j.printed} printed; the last label is still inside the printer (press Feed & cut).` : `Done. ${j.printed} label${j.printed === 1 ? '' : 's'} printed and cut.`;
-    else if (j.state === 'error') { this.status.textContent = `Error: ${j.error}`; this.status.classList.add('err'); }
-    else if (j.state === 'cancelled') this.status.textContent = `Cancelled after ${j.printed} label(s).`;
-    this._finish();
-    if (j.state === 'done' && this.chain) this.btnFeedCut.classList.remove('hidden');
+    if (job.state === 'error' || job.state === 'cancelled') { this.st.mode = 'stopped'; this._end(); }
   }
 
-  _finish() { this.scene.classList.remove('printing'); this.btnCancel.classList.add('hidden'); this.btnClose.classList.remove('hidden'); this.title.textContent = 'Finished'; }
+  /** Tape (mm) the printer has provably fed: it reports a label once the head has printed it, a lead piece's length before that label is cut. */
+  _reportedMm() { const n = Math.min(this.job.printed || 0, this.labels.length); return n ? this.ends[n] - PRINT.leaderMm : 0; }
+  _reported(p) { return p.kind !== 'label' || (this.job.printed || 0) > p.i || this.job.state === 'done'; }
+
+  _tick(now) {
+    const dt = Math.min(0.1, Math.max(0, (now - this.lastNow) / 1000));
+    this.lastNow = now;
+    const st = this.st, job = this.job, ended = job.state === 'done';
+    if (st.mode === 'stopped') return;
+    if (st.mode === 'wait') {
+      const start = job.movingAt || (job.sentAt && job.sentAt[0] != null ? job.sentAt[0] + PRINT.startS * 1000 : null);
+      if (ended) st.mode = 'finish';
+      else if (start != null && Date.now() >= start) st.mode = 'run';
+      else { if (job.sentAt && job.sentAt[0] != null) this.status.textContent = 'Waiting for the printer…'; return; }
+      this.scene.classList.add('printing');
+      this._beginPiece();
+    }
+    if (st.mode === 'cut' || st.mode === 'finishcut') {
+      if (now < st.cutEnd) return this._paint();
+      st.k++;
+      if (st.k >= this.pieces.length) { st.mode = 'out'; this.cur = null; this.labelOut.innerHTML = ''; }
+      else { st.mode = st.mode === 'finishcut' ? 'finish' : 'run'; this._beginPiece(); }
+    }
+    if (st.mode === 'out') { this.bar.style.width = '100%'; if (ended) { st.mode = 'stopped'; this._end(); } return; }
+    if (ended && st.mode !== 'finish') st.mode = 'finish';                 // the printer is done: play out the rest quickly
+    if (st.mode === 'hold') {
+      if (this._reported(this.pieces[st.k])) this._cut(now);
+      else if (now - st.holdSince > HOLD_MAX_MS) { this.freeRun = true; this._cut(now); }   // this printer does not report each label
+      return this._paint();
+    }
+    let v = this.v;
+    const behind = this._reportedMm() - st.d;
+    if (behind > 2) v *= Math.min(4, 1 + behind / 15);                     // the printer is ahead of us: catch up
+    if (st.mode === 'finish') v = Math.max(this.v * 4, (this.totalMm - st.d) / 0.8);
+    st.d = Math.min(this.ends[st.k], st.d + v * dt);
+    if (st.d >= this.ends[st.k] - 1e-6) {
+      const p = this.pieces[st.k];
+      if (st.mode !== 'finish' && !this.freeRun && !this._reported(p)) { st.mode = 'hold'; st.holdSince = now; }   // ahead of the printer: wait
+      else this._cut(now);
+    }
+    this._paint();
+  }
+
+  _beginPiece() {
+    const p = this.pieces[this.st.k], n = this.labels.length;
+    this.cur = this._buildSlices(p.canvas);
+    this.list.querySelectorAll('span').forEach(sp => sp.classList.toggle('cur', p.kind === 'label' && +sp.dataset.i === p.i));
+    this.status.textContent = p.kind === 'leader' ? 'Feeding the blank lead piece…' : `Label ${p.i + 1} of ${n}  ·  ${this.labels[p.i].name || ''}`;
+  }
+
+  _paint() {
+    const st = this.st;
+    if (this.cur) this._layout((st.d - (st.k ? this.ends[st.k - 1] : 0)) * DOTS_PER_MM * this.labelScale);
+    this.bar.style.width = `${Math.min(100, (st.d / this.totalMm) * 100).toFixed(2)}%`;
+  }
+
+  _cut(now) {
+    const st = this.st, p = this.pieces[st.k];
+    const lastLabel = p.kind === 'label' && p.i === this.labels.length - 1;
+    if (!(this.chain && lastLabel)) {
+      this.blade.classList.remove('snap'); void this.blade.offsetWidth; this.blade.classList.add('snap');
+      this.spark.classList.remove('go'); void this.spark.offsetWidth; this.spark.classList.add('go');
+      this._drop(p);
+    }
+    if (p.kind === 'label') this.list.querySelectorAll('span').forEach(sp => { if (+sp.dataset.i === p.i) { sp.classList.remove('cur'); sp.classList.add('done'); sp.scrollIntoView({ block: 'nearest' }); } });
+    const fast = st.mode === 'finish';
+    st.mode = fast ? 'finishcut' : 'cut';
+    st.cutEnd = now + (fast ? 120 : PRINT.cutS * 1000);
+  }
+
+  /** The finished job's message and buttons. */
+  _end() {
+    const j = this.job;
+    this.scene.classList.remove('printing');
+    if (j.state === 'done') {
+      this.bar.style.width = '100%';
+      this.status.textContent = (this.chain ? `Done. ${j.printed} printed; the last label is still inside the printer (press Feed & cut).` : `Done. ${j.printed} label${j.printed === 1 ? '' : 's'} printed and cut.`) + (j.warning ? ` Note: ${j.warning}` : '');
+      if (this.speeds.length && this.onSpeed) this.onSpeed(this.speeds.slice().sort((a, b) => a - b)[this.speeds.length >> 1]);
+    } else if (j.state === 'error') { this.status.textContent = `Error: ${j.error}`; this.status.classList.add('err'); }
+    // a cancelled job never sends its final feed-and-cut page, so the last printed label stays inside
+    const leftInside = j.state === 'cancelled' && (j.printed > 0 || !!j.phase);
+    if (j.state === 'cancelled') this.status.textContent = `Cancelled after ${j.printed} label${j.printed === 1 ? '' : 's'}.${leftInside ? ' The last one may still be inside the printer: press Feed & cut to get it out.' : ''}`;
+    this.btnCancel.classList.add('hidden'); this.btnClose.classList.remove('hidden'); this.title.textContent = 'Finished';
+    if ((j.state === 'done' && this.chain) || leftInside) this.btnFeedCut.classList.remove('hidden');
+  }
 
   // ---- tape coming out of the slot ---------------------------------------------------------
-  _buildSlices(label) {
-    const s = this.labelScale, hPx = label.height * s, Wpx = label.width * s;
+  _buildSlices(canvas) {
+    const s = this.labelScale, hPx = canvas.height * s, Wpx = canvas.width * s;
     const n = Math.ceil(Wpx / SLICE), slices = [];
     this.labelOut.innerHTML = '';
     for (let i = 0; i < n; i++) {
       const x0 = i * SLICE, wPx = Math.min(SLICE, Wpx - x0);
       const c = document.createElement('canvas');
-      c.width = Math.max(1, Math.round(wPx / s)); c.height = label.height;
-      c.getContext('2d').drawImage(label.canvas, Math.round(x0 / s), 0, c.width, label.height, 0, 0, c.width, label.height);
-      c.className = "slice"; c.style.width = `${wPx + 1.2}px`; c.style.height = `${hPx}px`;
+      c.width = Math.max(1, Math.round(wPx / s)); c.height = canvas.height;
+      c.getContext('2d').drawImage(canvas, Math.round(x0 / s), 0, c.width, canvas.height, 0, 0, c.width, canvas.height);
+      c.className = 'slice'; c.style.width = `${wPx + 1.2}px`; c.style.height = `${hPx}px`;
       c.style.display = 'none';
       this.labelOut.appendChild(c);
       slices.push({ el: c, x0, w: wPx });
@@ -199,12 +284,12 @@ export class PrintTheater {
     return { slices, hPx, Wpx };
   }
 
-  /** Lay the slices along the path for an emerged length L (px). The label's trailing end is at the slot. */
+  /** Lay the slices along the path for an emerged length L (px). The piece's trailing end is at the slot. */
   _layout(L) {
     const { slices, hPx, Wpx } = this.cur;
     for (const sl of slices) {
       const sMid = L - (Wpx - (sl.x0 + sl.w / 2));         // distance of this slice from the slot
-      if (sMid < 0) { sl.el.style.display = 'none'; continue; }
+      if (sMid < 0) { if (sl.el.style.display !== 'none') sl.el.style.display = 'none'; continue; }
       const f = tapeFrame(Math.max(0, sMid - sl.w / 2));
       const ex = f.x + (hPx / 2) * f.ux, ey = f.y + (hPx / 2) * f.uy;    // top-left corner of the slice
       sl.el.style.display = 'block';
@@ -212,52 +297,31 @@ export class PrintTheater {
     }
   }
 
-  async _animateStart(i) {
-    const label = this.labels[i];
-    this.list.querySelectorAll('span').forEach(sp => sp.classList.toggle('cur', +sp.dataset.i === i));
-    this.cur = this._buildSlices(label);
-    const mm = dotsToMm(label.width) + 4;
-    const dur = Math.max(700, Math.min(6000, (mm / FEED_MM_PER_S) * 1000));
-    const total = this.cur.Wpx;
-    await new Promise((resolve) => {
-      const t0 = performance.now();
-      const step = (now) => {
-        const p = Math.min(1, (now - t0) / dur);
-        this._layout(p * total);
-        if (p < 1) this.raf = requestAnimationFrame(step); else resolve();
-      };
-      this.raf = requestAnimationFrame(step);
-    });
-  }
-
-  async _animateCut(i) {
+  /** The cut piece drops into the bin: one flat canvas, scaled to the bin, newest on top. */
+  _drop(p) {
     if (!this.cur) return;
-    const label = this.labels[i];
-    this.blade.classList.remove('snap'); void this.blade.offsetWidth; this.blade.classList.add('snap');
-    this.spark.classList.remove('go'); void this.spark.offsetWidth; this.spark.classList.add('go');
-    await wait(180);
-    // the cut label drops into the bin: one flat canvas, scaled to the bin, newest on top
-    const binInner = BIN.w - 36, s = Math.min(this.labelScale, binInner / label.width, 40 / label.height);
-    const p = document.createElement('canvas'); p.width = label.width; p.height = label.height; p.getContext('2d').drawImage(label.canvas, 0, 0);
-    const count = this.pile.children.length;
-    const lift = Math.min(BIN.h - 50, count * 2.4);
-    p.style.width = `${label.width * s}px`; p.style.height = `${label.height * s}px`;
-    p.style.left = `${Math.max(0, (binInner - label.width * s) / 2) + (Math.random() * 10 - 5)}px`;
-    p.style.bottom = `${8 + lift}px`;
-    p.style.setProperty('--rot', `${(Math.random() * 4 - 2).toFixed(1)}deg`);
-    this.pile.appendChild(p);
-    // fly from the end of the tape path to the stack
+    const c = p.canvas, binInner = BIN.w - 36, s = Math.min(this.labelScale, binInner / c.width, 40 / c.height);
+    const el = document.createElement('canvas'); el.width = c.width; el.height = c.height; el.getContext('2d').drawImage(c, 0, 0);
+    if (p.kind === 'leader') el.classList.add('chip');
+    const lift = Math.min(BIN.h - 50, this.pile.children.length * 2.4);
+    el.style.width = `${c.width * s}px`; el.style.height = `${c.height * s}px`;
+    el.style.left = `${Math.max(0, (binInner - c.width * s) / 2) + (Math.random() * 10 - 5)}px`;
+    el.style.bottom = `${8 + lift}px`;
+    el.style.setProperty('--rot', `${(Math.random() * 4 - 2).toFixed(1)}deg`);
+    this.pile.appendChild(el);
     const end = tapeFrame(Math.min(this.cur.Wpx, PATH.flat + PATH.bend + 10));
     const pileRect = this.pile.getBoundingClientRect(), sceneRect = this.scene.getBoundingClientRect();
-    const targetX = pileRect.left - sceneRect.left + parseFloat(p.style.left), targetY = pileRect.bottom - sceneRect.top - parseFloat(p.style.bottom) - label.height * s;
-    const dx = end.x - targetX, dy = (end.y - label.height * this.labelScale / 2) - targetY;
-    p.animate([{ transform: `translate(${dx}px, ${dy}px) rotate(0deg)`, opacity: .95 }, { transform: `translate(0,0) rotate(var(--rot))`, opacity: 1 }], { duration: 650, easing: 'cubic-bezier(.3,.8,.4,1.05)', fill: 'forwards' });
+    const targetX = pileRect.left - sceneRect.left + parseFloat(el.style.left), targetY = pileRect.bottom - sceneRect.top - parseFloat(el.style.bottom) - c.height * s;
+    const dx = end.x - targetX, dy = (end.y - c.height * this.labelScale / 2) - targetY;
+    el.animate([{ transform: `translate(${dx}px, ${dy}px) rotate(0deg)`, opacity: .95 }, { transform: 'translate(0,0) rotate(var(--rot))', opacity: 1 }], { duration: 650, easing: 'cubic-bezier(.3,.8,.4,1.05)', fill: 'forwards' });
     if (this.pile.children.length > 80) this.pile.removeChild(this.pile.firstChild);
     this.labelOut.innerHTML = ''; this.cur = null;
-    this.list.querySelectorAll('span').forEach(sp => { if (+sp.dataset.i === i) { sp.classList.remove('cur'); sp.classList.add('done'); sp.scrollIntoView({ block: 'nearest' }); } });
-    await wait(200);
   }
-
 }
 
-const wait = (ms) => new Promise(r => setTimeout(r, ms));
+function blankTape(w, h) {
+  const c = document.createElement('canvas'); c.width = Math.max(1, w); c.height = h;
+  const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, h);
+  return c;
+}
+function withMargins(src, margin, h) { const c = blankTape(src.width + 2 * margin, h); c.getContext('2d').drawImage(src, margin, 0); return c; }

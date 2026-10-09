@@ -76,30 +76,53 @@
   <section class="card" id="cardLayout">
     <div class="card-head">
       <h2>Layout</h2>
-      <label class="check wrap-toggle" title="On: QR · name · two fold lines · name · QR on one piece, to wrap around a rod. Off: just the name."><input type="checkbox" id="optWrap" checked> Label Wrap</label>
-      <div class="group">
-        <button data-add="text" class="small" title="Add text">T Text</button>
-        <button data-add="image" class="small" title="Add a photo">▣ Photo</button>
-        <button data-add="qr" class="small">▦ QR</button>
-        <button data-add="barcode" class="small">▥ Barcode</button>
-        <button data-add="rect" class="small">▭ Box</button>
-        <button data-add="line" class="small">│ Line</button>
+      <div class="lib">
+        <select id="libSelect" title="Your layouts"></select>
+        <button id="libNew" class="small" title="New layout (⌘N)">＋ New</button>
+        <div class="menu-wrap">
+          <button id="libMenuBtn" class="small" title="More layout actions" aria-haspopup="true">⋯</button>
+          <div id="libMenu" class="menu hidden" role="menu">
+            <button data-lib="duplicate">Duplicate</button>
+            <button data-lib="rename">Rename</button>
+            <button data-lib="revert" title="Only for layouts that came with TapeDeck">Revert to built-in version</button>
+            <hr>
+            <button data-lib="import">Import…</button>
+            <button data-lib="export">Export…</button>
+            <button data-lib="folder">Show layouts folder</button>
+            <button data-lib="restore">Restore built-in layouts</button>
+            <hr>
+            <button data-lib="delete" class="danger">Delete…</button>
+          </div>
+        </div>
+        <span id="libState" class="lib-state saved">Saved</span>
       </div>
-      <label class="lbl">Zoom <input id="dzZoom" type="range" min="1" max="12" value="4" step="0.5" style="width:80px"></label>
-      <div class="group tpl">
-        <select id="tplList" title="Saved layouts"><option value="">Layouts…</option></select>
-        <input id="tplName" placeholder="name" size="10">
-        <button id="tplSave" class="small">Save</button>
-        <button id="tplDelete" class="small" title="Delete selected layout">✕</button>
-        <button id="tplExport" class="small">Export</button>
-        <button id="tplImport" class="small">Import</button>
-        <input type="file" id="tplImportFile" accept=".json" hidden>
-        <button id="tplReset" class="small" title="Rebuild the layout from the Label Wrap setting">Reset</button>
-      </div>
+      <span class="spacer"></span>
+      <button id="btnUndo" class="small icon" title="Undo (⌘Z)" aria-label="Undo" disabled><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M6 3.5L2.5 7 6 10.5M3 7h6.5a4 4 0 010 8H7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <button id="btnRedo" class="small icon" title="Redo (⇧⌘Z)" aria-label="Redo" disabled><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M10 3.5L13.5 7 10 10.5M13 7H6.5a4 4 0 000 8H9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    </div>
+    <div class="dz-toolbar">
+      <span class="lbl">Add</span>
+      <button data-add="text" class="small" title="Add text">T Text</button>
+      <button data-add="qr" class="small" title="Add a QR code">▦ QR</button>
+      <button data-add="barcode" class="small" title="Add a Code 128 barcode">▥ Barcode</button>
+      <button data-add="image" class="small" title="Add a photo (or drop an image on the label)">▣ Photo</button>
+      <button data-add="rect" class="small" title="Add a box">▭ Box</button>
+      <button data-add="line" class="small" title="Add a line">│ Line</button>
+      <span class="spacer"></span>
+      <label class="check inline" title="Snap to edges, centers and the tape while dragging (hold ⌥ to turn it off for a moment)"><input type="checkbox" id="dzSnap" checked> Snap</label>
+      <label class="lbl">Zoom <input id="dzZoom" type="range" min="0.5" max="12" value="4" step="0.25" style="width:90px"></label>
+      <button id="dzFit" class="small" title="Fit the whole label (or double-click an empty spot)">Fit</button>
     </div>
     <div class="dz-stage" id="dzStage"><canvas id="dzCanvas"></canvas></div>
-    <div class="dz-help">Drag to move · handles resize · ⌫ delete · ⌘D duplicate · arrows nudge · double-click background to fit · tokens: <code>{text}</code> <code>{n}</code> <span id="dzTokens"></span></div>
-    <div id="dzProps" class="dz-props"></div>
+    <div class="dz-help">Drag elements to rearrange them · drag a gap to change spacing (⌥: all gaps) · ⇧ keeps the drag straight · ⌥ no snapping · ←→ move in the row · ⌫ delete · ⌘D duplicate · ⌘Z undo · tokens: <code>{text}</code> <span id="dzTokens"></span></div>
+    <div class="dz-panel">
+      <div class="col">
+        <div class="elist-head"><h4>Elements</h4><span class="hint">drag to reorder · top is the left end</span></div>
+        <div id="dzList" class="elist"></div>
+        <div id="dzLayout"></div>
+      </div>
+      <div class="col" id="dzProps"></div>
+    </div>
     <input type="file" id="dzImageFile" accept="image/*" hidden>
   </section>
 </main>
@@ -153,6 +176,8 @@
     <hr>
     <label class="check"><input type="checkbox" id="optMock"> Mock printer <small>(no USB needed; simulates printing)</small></label>
     <label class="field"><span>Mock tape width</span><select id="optMockTape"><option>6</option><option>9</option><option>12</option><option>18</option><option>24</option></select></label>
+    <hr>
+    <div class="data-dir"><span class="muted">Settings and layouts are saved as JSON files in</span><code id="dataDir"></code><button id="btnShowData" class="small">Show folder</button></div>
     <hr>
     <div class="row"><span id="verTxt" class="muted"></span><span class="spacer"></span><button id="btnCheckUpdates">Check for updates</button></div>
     <div id="updateTxt" class="hint" style="margin-top:6px"></div>

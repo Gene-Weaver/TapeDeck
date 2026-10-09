@@ -1,75 +1,141 @@
-// Layout -> 1-bit label canvas at 180 dpi. Width = length along the tape, height = tape pins.
-import { tape, mmToDots } from './tape.js';
+// Layout -> 1-bit label bitmap at 180 dpi. Width = length along the tape, height = tape pins.
+// measureItems() sizes every element for one label's value, arrange() (layout.js) places them,
+// paintItem() draws each element and composeLabel() puts the label together.
+import { tape } from './tape.js';
 import { expand } from './pattern.js';
 import { drawCode128, drawQr } from './codes.js';
-
-let _uid = 0;
-export const uid = () => `e${Date.now().toString(36)}${(_uid++).toString(36)}`;
+import { arrange } from './layout.js';
 
 export const FONTS = ['Helvetica', 'Arial', 'Helvetica Neue', 'Avenir Next', 'Futura', 'Gill Sans', 'Georgia', 'Times New Roman',
   'Courier New', 'Menlo', 'Monaco', 'SF Mono', 'Impact', 'Arial Black', 'Trebuchet MS', 'Verdana', 'Optima', 'Palatino', 'Chalkboard'];
 
-export function defaultElement(type, t) {
-  const base = { id: uid(), type, x: 8, y: 2, rotate: 0, hCenter: false, vCenter: true };
-  switch (type) {
-    case 'text': return { ...base, text: '{text}', font: 'Helvetica', size: Math.round(t.pins * 0.7), bold: false, italic: false,
-      align: 'left', w: null, autoSize: true, lineHeight: 1.15, invert: false };
-    case 'image': return { ...base, w: t.pins, h: t.pins, src: null, dither: 'fs', threshold: 128, invert: false, keepAspect: true, _img: null };
-    case 'qr': return { ...base, size: t.pins, text: '{text}', ecc: 'M', quiet: 1 };
-    case 'barcode': return { ...base, w: Math.round(t.pins * 3), h: Math.max(8, t.pins - 2), text: '{text}', showText: false };
-    case 'rect': return { ...base, w: 60, h: t.pins - 2, stroke: 2, fill: false, radius: 4, vCenter: true };
-    case 'line': return { ...base, w: 2, h: t.pins, stroke: 0 };
-    default: throw new Error('unknown element ' + type);
-  }
-}
+const mctx = document.createElement('canvas').getContext('2d');
 
-export function simpleTextLayout(opts = {}) {
-  const t = tape(opts.tapeMm || 6);
-  const el = { ...defaultElement('text', t), x: 0, hCenter: true, vCenter: true, align: 'center',
-    font: opts.font || 'Helvetica', bold: !!opts.bold, autoSize: opts.autoSize !== false, size: opts.size || Math.round(t.pins * 0.7) };
-  return { version: 1, name: 'Simple text', length: { mode: opts.lengthMode || 'auto', dots: opts.lengthDots || mmToDots(30), padding: opts.padding ?? 6 },
-    border: !!opts.border, elements: [el] };
-}
-
-// ---- helpers ---------------------------------------------------------------
-
+// ---- text metrics --------------------------------------------------------------------------------
 function fontString(el, size) {
-  return `${el.italic ? 'italic ' : ''}${el.bold ? 'bold ' : ''}${size}px "${el.font || 'Helvetica'}"`;
+  return `${el.italic ? 'italic ' : ''}${el.bold ? 'bold ' : ''}${size}px "${el.font || 'Helvetica'}", Helvetica, Arial, sans-serif`;
 }
 
-const measureCtx = document.createElement('canvas').getContext('2d');
-
-function measureText(el, size) {
-  measureCtx.font = fontString(el, size);
-  const lines = String(el._resolved ?? '').split('\n');
+function measureText(el, text, size) {
+  mctx.font = fontString(el, size);
+  const lines = String(text ?? '').split('\n');
   let w = 0, fontAsc = 0, fontDesc = 0;
   const per = [];
   for (const ln of lines) {
-    const m = measureCtx.measureText(ln || ' ');
+    const m = mctx.measureText(ln || ' ');
     w = Math.max(w, m.width);
-    fontAsc = Math.max(fontAsc, m.fontBoundingBoxAscent ?? m.actualBoundingBoxAscent ?? size * 0.8);
-    fontDesc = Math.max(fontDesc, m.fontBoundingBoxDescent ?? m.actualBoundingBoxDescent ?? size * 0.22);
+    fontAsc = Math.max(fontAsc, m.fontBoundingBoxAscent ?? size * 0.8);
+    fontDesc = Math.max(fontDesc, m.fontBoundingBoxDescent ?? size * 0.22);
     per.push({ asc: m.actualBoundingBoxAscent ?? 0, desc: m.actualBoundingBoxDescent ?? 0 });
   }
   const lineH = Math.round((fontAsc + fontDesc) * (el.lineHeight || 1.15));
-  // Tight vertical bounds of the actual glyphs (so "UM-AA-01" centres on its capitals, not on the
-  // font's em box with its empty descender space). Fall back to font metrics for blank text.
+  // Tight vertical bounds of the actual glyphs, so "UM-001-A" centers on its capitals rather than on
+  // the font's em box with its empty descender space. Blank text falls back to the font metrics.
   let asc = Math.ceil(per[0].asc), desc = Math.ceil(per[per.length - 1].desc);
   if (asc + desc < 2) { asc = Math.ceil(fontAsc); desc = Math.ceil(fontDesc); }
-  const h = (lines.length - 1) * lineH + asc + desc;
-  return { w: Math.ceil(w), lineH, asc, h: Math.max(1, h), emH: lines.length * lineH, lines };
+  return { w: Math.ceil(w), lineH, asc, h: Math.max(1, (lines.length - 1) * lineH + asc + desc), emH: lines.length * lineH, lines };
 }
 
-function fitTextSize(el, maxH, maxW) {
-  let lo = 4, hi = 400;
-  while (lo < hi) {
-    const mid = Math.ceil((lo + hi) / 2);
-    const m = measureText(el, mid);
-    if (m.emH <= maxH && (!maxW || m.w <= maxW)) lo = mid; else hi = mid - 1;   // fit the em box (descenders safe); centre on glyphs
+const emCache = new Map();
+/** Largest font size whose line boxes fit `maxEm` dots. Depends only on the font and line count, so it is cached. */
+function fitEm(el, lines, maxEm) {
+  const key = `${fontString(el, 100)}|${el.lineHeight}|${lines}|${maxEm}`;
+  let size = emCache.get(key);
+  if (size == null) {
+    const probe = new Array(lines).fill('Hg').join('\n');
+    let lo = 4, hi = 2000;
+    while (lo < hi) { const mid = Math.ceil((lo + hi) / 2); if (measureText(el, probe, mid).emH <= maxEm) lo = mid; else hi = mid - 1; }
+    size = lo;
+    if (emCache.size > 500) emCache.clear();
+    emCache.set(key, size);
   }
-  return lo;
+  return size;
 }
 
+/** Auto size: as large as the tape allows (the em box fits maxEm, descenders safe), shrunk further to fit maxW if given. */
+function fitText(el, text, maxEm, maxW) {
+  let size = fitEm(el, String(text).split('\n').length, maxEm);
+  if (maxW && measureText(el, text, size).w > maxW) {
+    let lo = 4, hi = size - 1;
+    while (lo < hi) { const mid = Math.ceil((lo + hi) / 2); if (measureText(el, text, mid).w <= maxW) lo = mid; else hi = mid - 1; }
+    size = lo;
+  }
+  return size;
+}
+
+// ---- series: text boxes set to "same width for all labels" fit the widest value of the whole series ----
+let series = { values: [], key: 0 };
+const seriesWidths = new Map();
+/** values: label values spread over the whole series (pattern.js patternSample / spread). */
+export function setSeries(values) { series = { values: Array.isArray(values) ? values : [], key: series.key + 1 }; seriesWidths.clear(); }
+
+function seriesWidth(el, maxEm, run) {
+  const key = [el.text, el.font, el.bold, el.italic, el.lineHeight, el.autoSize, el.size, maxEm, run].join('|');
+  let w = seriesWidths.get(key);
+  if (w == null) {
+    w = 1;
+    const vals = series.values.length ? series.values : [{ text: '', n: 1, i: 1, fields: {} }];
+    for (const v of vals) {
+      const text = expand(el.text, v);
+      const size = el.autoSize ? fitText(el, text, maxEm, run) : Math.max(4, Math.round(el.size || 20));
+      w = Math.max(w, measureText(el, text, size).w);
+    }
+    seriesWidths.set(key, w);
+  }
+  return w;
+}
+
+// ---- measuring -------------------------------------------------------------------------------------
+const sideways = (el) => (((el.rotate || 0) % 180) + 180) % 180 !== 0;
+
+/** Element size before rotation, in dots, for this label's value. */
+function measureElement(el, value, H) {
+  const side = sideways(el);
+  switch (el.type) {
+    case 'text': {
+      const text = expand(el.text, value);
+      const maxEm = side ? 600 : Math.max(4, H - 2);
+      const run = side ? Math.max(4, H - 2) : null;          // sideways text runs across the tape
+      let boxW = null;
+      if (el.widthMode === 'fixed') boxW = Math.max(4, Math.round(el.w || 0));
+      else if (el.widthMode === 'series') boxW = seriesWidth(el, maxEm, run);
+      const limit = run && boxW ? Math.min(run, boxW) : (run || boxW);
+      const size = el.autoSize ? fitText(el, text, maxEm, limit) : Math.max(4, Math.round(el.size || 20));
+      const m = measureText(el, text, size);
+      return { w: boxW ?? Math.max(1, m.w), h: m.h, text, size, m };
+    }
+    case 'image': {
+      const h = el.fullHeight && !side ? H : Math.max(1, Math.round(el.h || 1));
+      const img = el._img;
+      const w = el.keepAspect && img && img.naturalWidth && img.naturalHeight ? Math.max(1, Math.round(h * img.naturalWidth / img.naturalHeight)) : Math.max(1, Math.round(el.w || 1));
+      return { w, h };
+    }
+    case 'qr': { const s = el.fullHeight ? H : Math.max(8, Math.round(el.size || H)); return { w: s, h: s }; }
+    case 'barcode': return { w: Math.max(16, Math.round(el.w || 16)), h: el.fullHeight && !side ? H : Math.max(4, Math.round(el.h || H)) };
+    case 'rect': return { w: Math.max(2, Math.round(el.w || 2)), h: el.fullHeight && !side ? H : Math.max(2, Math.round(el.h || H)) };
+    case 'line': return { w: Math.max(1, Math.round(el.w || 1)), h: el.fullHeight && !side ? H : Math.max(1, Math.round(el.h || H)) };
+    default: return { w: 1, h: 1 };
+  }
+}
+
+/**
+ * Size every visible element for one label. Returns { H, items } with items in list order:
+ * { id, el, rot, iw, ih (size before rotation), w, h (size on the label), info }.
+ */
+export function measureItems(L, value, tapeMm) {
+  const H = tape(tapeMm).pins;
+  const items = [];
+  for (const el of L.elements) {
+    if (el.hidden) continue;
+    const info = measureElement(el, value, H);
+    const rot = (((el.rotate || 0) % 360) + 360) % 360;
+    const side = rot % 180 !== 0;
+    items.push({ id: el.id, el, rot, iw: info.w, ih: info.h, w: side ? info.h : info.w, h: side ? info.w : info.h, info });
+  }
+  return { H, items };
+}
+
+// ---- painting --------------------------------------------------------------------------------------
 function toOneBit(ctx, w, h, threshold = 128) {
   const img = ctx.getImageData(0, 0, w, h);
   const d = img.data;
@@ -84,7 +150,7 @@ function toOneBit(ctx, w, h, threshold = 128) {
 
 export function ditherImage(srcImg, w, h, mode = 'fs', threshold = 128, invert = false) {
   const c = document.createElement('canvas'); c.width = w; c.height = h;
-  const ctx = c.getContext('2d');
+  const ctx = c.getContext('2d', { willReadFrequently: true });
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(srcImg, 0, 0, w, h);
@@ -92,7 +158,7 @@ export function ditherImage(srcImg, w, h, mode = 'fs', threshold = 128, invert =
   const g = new Float32Array(w * h);
   for (let i = 0, p = 0; i < d.length; i += 4, p++) {
     const a = d[i + 3] / 255;
-    let lum = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) * a + 255 * (1 - a);
+    const lum = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) * a + 255 * (1 - a);
     g[p] = invert ? 255 - lum : lum;
   }
   if (mode === 'fs') {
@@ -110,23 +176,24 @@ export function ditherImage(srcImg, w, h, mode = 'fs', threshold = 128, invert =
   return c;
 }
 
-// ---- element rendering -----------------------------------------------------
+const dithered = new WeakMap();   // image -> Map(settings -> canvas), so a photo is dithered once per size, not once per label
+function ditherCached(el, w, h) {
+  let m = dithered.get(el._img);
+  if (!m) { m = new Map(); dithered.set(el._img, m); }
+  const key = `${w}x${h}|${el.dither}|${el.threshold}|${el.invert}`;
+  let c = m.get(key);
+  if (!c) { if (m.size > 16) m.clear(); c = ditherImage(el._img, w, h, el.dither, el.threshold, el.invert); m.set(key, c); }
+  return c;
+}
 
-/** Render one element into an offscreen canvas (unrotated). Returns {canvas, w, h}. */
-function renderElement(el, t, value) {
-  const c = document.createElement('canvas');
-  const ctx0 = c.getContext('2d');
-  let w = 1, h = 1;
-  const resolve = (s) => expand(s, value);
+/** Draw one measured element (unrotated) into its own canvas. */
+export function paintItem(it, value) {
+  const el = it.el, w = Math.max(1, it.iw), h = Math.max(1, it.ih);
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
   switch (el.type) {
     case 'text': {
-      el._resolved = resolve(el.text);
-      let size = Math.max(4, Math.round(el.size || 20));
-      if (el.autoSize) size = fitTextSize(el, Math.max(4, t.pins - 2), el.w || null);
-      const m = measureText(el, size);
-      w = Math.max(1, el.w || m.w); h = Math.max(1, m.h);
-      c.width = w; c.height = h;
-      const ctx = c.getContext('2d');
+      const { size, m } = it.info;
       if (el.invert) { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h); }
       ctx.fillStyle = el.invert ? '#fff' : '#000';
       ctx.font = fontString(el, size);
@@ -134,16 +201,11 @@ function renderElement(el, t, value) {
       ctx.textAlign = el.align || 'left';
       const ax = el.align === 'center' ? w / 2 : el.align === 'right' ? w : 0;
       m.lines.forEach((ln, i) => ctx.fillText(ln, ax, Math.round(i * m.lineH + m.asc)));
-      el._size = size;
       break;
     }
     case 'image': {
-      w = Math.max(1, Math.round(el.w)); h = Math.max(1, Math.round(el.h));
-      c.width = w; c.height = h;
-      const ctx = c.getContext('2d');
-      if (el._img && el._img.complete && el._img.naturalWidth) {
-        ctx.drawImage(ditherImage(el._img, w, h, el.dither, el.threshold, el.invert), 0, 0);
-      } else {
+      if (el._img && el._img.complete && el._img.naturalWidth) ctx.drawImage(ditherCached(el, w, h), 0, 0);
+      else {
         ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
         ctx.strokeStyle = '#000'; ctx.setLineDash([3, 3]); ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
         ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(w, h); ctx.moveTo(w, 0); ctx.lineTo(0, h); ctx.stroke();
@@ -151,199 +213,114 @@ function renderElement(el, t, value) {
       break;
     }
     case 'qr': {
-      w = h = Math.max(8, Math.round(el.size));
-      c.width = w; c.height = h;
-      const ctx = c.getContext('2d');
       ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
       ctx.strokeStyle = '#000';
-      el._qr = drawQr(ctx, resolve(el.text), 0, 0, w, el.ecc || 'M', el.quiet ?? 1);
+      el._qr = drawQr(ctx, expand(el.text, value), 0, 0, w, el.ecc || 'M', el.quiet ?? 1);
       break;
     }
     case 'barcode': {
-      w = Math.max(16, Math.round(el.w)); h = Math.max(4, Math.round(el.h));
-      c.width = w; c.height = h;
-      const ctx = c.getContext('2d');
       ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
       ctx.strokeStyle = '#000';
-      const txt = resolve(el.text);
+      const txt = expand(el.text, value);
       let barH = h;
       if (el.showText) {
         const fs = Math.max(6, Math.min(12, Math.round(h * 0.3)));
         barH = h - fs - 1;
-        ctx.fillStyle = '#000'; ctx.font = `${fs}px Helvetica`; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+        ctx.fillStyle = '#000'; ctx.font = `${fs}px Helvetica, Arial, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
         ctx.fillText(txt, w / 2, h - 1);
       }
       el._bc = drawCode128(ctx, txt, 0, 0, w, barH);
       break;
     }
     case 'rect': {
-      w = Math.max(2, Math.round(el.w)); h = Math.max(2, Math.round(el.h));
-      c.width = w; c.height = h;
-      const ctx = c.getContext('2d');
       const s = Math.max(1, Math.round(el.stroke || 1)), r = Math.max(0, Math.min(el.radius || 0, Math.min(w, h) / 2));
       ctx.fillStyle = '#000'; ctx.strokeStyle = '#000';
-      const path = (x, y, ww, hh, rr) => { ctx.beginPath(); ctx.roundRect(x, y, ww, hh, rr); };
-      if (el.fill) { path(0, 0, w, h, r); ctx.fill(); }
-      else { ctx.lineWidth = s; path(s / 2, s / 2, w - s, h - s, Math.max(0, r - s / 2)); ctx.stroke(); }
+      ctx.beginPath();
+      if (el.fill) { ctx.roundRect(0, 0, w, h, r); ctx.fill(); }
+      else { ctx.lineWidth = s; ctx.roundRect(s / 2, s / 2, w - s, h - s, Math.max(0, r - s / 2)); ctx.stroke(); }
       break;
     }
-    case 'line': {
-      w = Math.max(1, Math.round(el.w)); h = Math.max(1, Math.round(el.h));
-      c.width = w; c.height = h;
-      const ctx = c.getContext('2d');
-      ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h);
-      break;
-    }
+    case 'line': ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h); break;
   }
-  void ctx0;
-  return { canvas: c, w, h };
+  return c;
 }
 
-function rotatedSize(w, h, rot) { return (rot % 180) ? { w: h, h: w } : { w, h }; }
-
-/**
- * Render a full label. Returns { canvas, width, height, boxes:[{id,x,y,w,h}], lengthDots }.
- * All coordinates in dots. The canvas is strictly black/white.
- */
-export function renderLabel(layout, value, tapeMm, { minLength = 8 } = {}) {
-  const t = tape(tapeMm);
-  const H = t.pins;
-  const pad = Math.max(0, Math.round(layout.length?.padding ?? 6));
-  const parts = [];
-  for (const el of layout.elements || []) {
-    if (el.hidden) continue;
-    const r = renderElement(el, t, value);
-    const rs = rotatedSize(r.w, r.h, el.rotate || 0);
-    parts.push({ el, ...r, rw: rs.w, rh: rs.h });
-  }
-  let W;
-  if (layout.length?.mode === 'fixed') W = Math.max(minLength, Math.round(layout.length.dots || mmToDots(30)));
-  else {
-    let right = 0, centeredW = 0;
-    for (const p of parts) {
-      if (p.el.hCenter) centeredW = Math.max(centeredW, p.rw);
-      else right = Math.max(right, Math.round(p.el.x) + p.rw);
-    }
-    W = Math.max(minLength, Math.max(right + pad, centeredW + 2 * pad));
-    if (!parts.length) W = Math.max(minLength, mmToDots(10));
-  }
-  const canvas = document.createElement('canvas');
-  canvas.width = W; canvas.height = H;
-  const ctx = canvas.getContext('2d');
+/** Put a label together from painted elements. opts.exclude leaves one element out (the designer draws it under the pointer). */
+export function composeLabel(L, arr, items, canvases, { exclude = null, oneBit = true } = {}) {
+  const W = arr.W, H = arr.H;
+  const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });   // read back for 1-bit conversion and printing
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
   ctx.imageSmoothingEnabled = false;
-  const boxes = [];
-  for (const p of parts) {
-    const el = p.el;
-    const x = el.hCenter ? Math.round((W - p.rw) / 2) : Math.round(el.x);
-    const y = el.vCenter ? Math.round((H - p.rh) / 2) : Math.round(el.y);
-    const rot = ((el.rotate || 0) % 360 + 360) % 360;
+  for (const it of items) {
+    if (it.id === exclude) continue;
+    const b = arr.boxes[it.id], c = canvases.get(it.id);
+    if (!b || !c) continue;
     ctx.save();
-    ctx.translate(x + p.rw / 2, y + p.rh / 2);
-    ctx.rotate(rot * Math.PI / 180);
-    ctx.drawImage(p.canvas, -p.w / 2, -p.h / 2);
+    ctx.translate(b.x + it.w / 2, b.y + it.h / 2);
+    ctx.rotate(it.rot * Math.PI / 180);
+    ctx.drawImage(c, -it.iw / 2, -it.ih / 2);
     ctx.restore();
-    boxes.push({ id: el.id, x, y, w: p.rw, h: p.rh });
   }
-  if (layout.border) {
-    const s = Math.max(1, Math.round(layout.borderWidth || 2));
+  if (L.border) {
+    const s = Math.max(1, Math.round(L.borderWidth || 2));
     ctx.strokeStyle = '#000'; ctx.lineWidth = s;
     ctx.strokeRect(s / 2, s / 2, W - s, H - s);
   }
-  toOneBit(ctx, W, H);
-  return { canvas, width: W, height: H, boxes, lengthDots: W };
+  if (oneBit) toOneBit(ctx, W, H);
+  return canvas;
+}
+
+/**
+ * Render a full label. Returns { canvas, width, height, boxes, arr, items, canvases }; all coordinates in dots.
+ * opts: { order, exclude, oneBit } (see arrange and composeLabel). The canvas is strictly black and white.
+ */
+export function renderLabel(L, value, tapeMm, opts = {}) {
+  const { H, items } = measureItems(L, value, tapeMm);
+  const arr = arrange(L, items, H, opts);
+  const canvases = new Map(items.map(it => [it.id, paintItem(it, value)]));
+  const canvas = composeLabel(L, arr, items, canvases, opts);
+  return { canvas, width: arr.W, height: H, boxes: arr.boxes, arr, items, canvases };
+}
+
+/** Label length in dots without painting anything. */
+export function measureLabelWidth(L, value, tapeMm) {
+  const { H, items } = measureItems(L, value, tapeMm);
+  return arrange(L, items, H).W;
 }
 
 export function canvasToPng(canvas) { return canvas.toDataURL('image/png'); }
 
-/** Load an image file into an element (sets el.src and el._img). */
-export function loadImageInto(el, file) {
-  return new Promise((resolve, reject) => {
-    const fr = new FileReader();
-    fr.onload = () => {
-      const img = new Image();
-      img.onload = () => {
-        el.src = fr.result; el._img = img;
-        if (el.keepAspect && img.naturalWidth) el.w = Math.max(1, Math.round(el.h * img.naturalWidth / img.naturalHeight));
-        resolve(el);
-      };
-      img.onerror = reject;
-      img.src = fr.result;
-    };
-    fr.onerror = reject;
-    fr.readAsDataURL(file);
-  });
-}
+// ---- images ------------------------------------------------------------------------------------------
+const imgCache = new Map();   // data URL -> loaded image, so undo and layout switches do not reload photos
+const loadImg = (src) => new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = () => rej(new Error('The image could not be read')); im.src = src; });
+function remember(src, img) { if (imgCache.size > 40) imgCache.delete(imgCache.keys().next().value); imgCache.set(src, img); }
 
-/** Rehydrate `_img` for layouts loaded from JSON. */
-export function hydrateLayout(layout) {
+/** Attach loaded images (`_img`) to a layout read from a file or restored by undo. */
+export function hydrateLayout(L) {
   const waits = [];
-  for (const el of layout.elements || []) {
-    if (el.type === 'image' && el.src && !el._img) {
-      waits.push(new Promise((res) => { const im = new Image(); im.onload = () => { el._img = im; res(); }; im.onerror = res; im.src = el.src; }));
-    }
+  for (const el of L.elements) {
+    if (el.type !== 'image') continue;
+    if (!el.src) { el._img = null; continue; }
+    const hit = imgCache.get(el.src);
+    if (hit) { el._img = hit; continue; }
+    waits.push(loadImg(el.src).then((im) => { remember(el.src, im); el._img = im; }, () => { el._img = null; }));
   }
-  return Promise.all(waits).then(() => layout);
+  return Promise.all(waits).then(() => L);
 }
 
-export function serializeLayout(layout) {
-  return JSON.stringify(layout, (k, v) => (k.startsWith('_') ? undefined : v));
-}
-
-/** Fast label width (dots) for text-only layouts; falls back to a full render. */
-export function measureLabelWidth(layout, value, tapeMm) {
-  const t = tape(tapeMm);
-  if (layout.length?.mode === 'fixed') return Math.max(8, Math.round(layout.length.dots || mmToDots(30)));
-  const els = (layout.elements || []).filter(e => !e.hidden);
-  if (els.length && els.every(e => e.type === 'text' && !(e.rotate % 180))) {
-    const pad = Math.max(0, Math.round(layout.length?.padding ?? 6));
-    let right = 0, centeredW = 0;
-    for (const el of els) {
-      el._resolved = expand(el.text, value);
-      let size = Math.max(4, Math.round(el.size || 20));
-      if (el.autoSize) size = fitTextSize(el, Math.max(4, t.pins - 2), el.w || null);
-      const w = Math.max(1, el.w || measureText(el, size).w);
-      if (el.hCenter) centeredW = Math.max(centeredW, w); else right = Math.max(right, Math.round(el.x) + w);
-    }
-    return Math.max(8, Math.max(right + pad, centeredW + 2 * pad));
+/** Read an image file as a data URL, scaled down so its longer side is at most maxSide pixels (labels are at most 128 dots tall). */
+export async function readImageFile(file, maxSide = 600) {
+  const url = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = () => rej(fr.error); fr.readAsDataURL(file); });
+  let img = await loadImg(url), src = url;
+  const big = Math.max(img.naturalWidth, img.naturalHeight);
+  if (big > maxSide) {
+    const k = maxSide / big, c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(img.naturalWidth * k)); c.height = Math.max(1, Math.round(img.naturalHeight * k));
+    const ctx = c.getContext('2d'); ctx.imageSmoothingQuality = 'high'; ctx.drawImage(img, 0, 0, c.width, c.height);
+    src = c.toDataURL('image/png');
+    img = await loadImg(src);
   }
-  return renderLabel(layout, value, tapeMm).width;
-}
-
-/** Width in dots of `text` rendered with element `el` at its auto-fit size for this tape. */
-export function textWidthFor(el, text, tapeMm) {
-  const t = tape(tapeMm);
-  const probe = { ...el, _resolved: text };
-  const size = el.autoSize ? fitTextSize(probe, Math.max(4, t.pins - 2), null) : Math.max(4, Math.round(el.size || 20));
-  return Math.ceil(measureText(probe, size).w);
-}
-
-/**
- * Rod-wrap layout: QR, the name, a solid 10 mm box (the fold goes around the rod there), the name
- * again, QR, so the label sticks to itself and reads on both faces.
- * `sampleText` sizes the fixed text boxes so every label in a series lines up identically.
- */
-export function wrapLayout(tapeMm, sampleText = 'UM-BZ-03', { qr = true } = {}) {
-  const t = tape(tapeMm);
-  const pad = 4, gap = 10, lineW = 0, between = mmToDots(10), qrGap = 6;
-  const base = { ...defaultElement('text', t), text: '{text}', font: 'Helvetica', bold: true, align: 'center', autoSize: true, vCenter: true, hCenter: false };
-  const w = textWidthFor(base, sampleText, tapeMm) + 6;
-  const els = [];
-  let x = pad;
-  // QR codes carry the label text; full tape height, no internal quiet zone so the modules stay as large as possible
-  const mkQr = () => ({ ...defaultElement('qr', t), id: uid(), x, size: t.pins, text: '{text}', ecc: 'M', quiet: 0, vCenter: true, hCenter: false });
-  if (qr) { els.push(mkQr()); x += t.pins + qrGap; }
-  els.push({ ...base, id: uid(), x, w }); x += w + gap;
-  els.push({ ...defaultElement('rect', t), id: uid(), x, w: between, h: t.pins, fill: true, radius: 0, stroke: 1, vCenter: true, hCenter: false }); x += between + gap;
-  void lineW;
-  els.push({ ...base, id: uid(), x, w }); x += w;
-  if (qr) { x += qrGap; els.push(mkQr()); }
-  return { version: 1, name: 'Label wrap', length: { mode: 'auto', dots: mmToDots(40), padding: pad }, border: false, elements: els };
-}
-
-/** Plain sequential label: the name centred, auto length. */
-export function plainLayout(tapeMm) {
-  const t = tape(tapeMm);
-  const el = { ...defaultElement('text', t), text: '{text}', font: 'Helvetica', bold: true, align: 'center', autoSize: true, vCenter: true, hCenter: true, x: 0 };
-  return { version: 1, name: 'Plain', length: { mode: 'auto', dots: mmToDots(30), padding: 6 }, border: false, elements: [el] };
+  remember(src, img);
+  return { src, img };
 }

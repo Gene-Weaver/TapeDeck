@@ -11,6 +11,7 @@ let getWin = () => null;
 let manualOnly = false;
 let pendingVersion = null;
 let downloaded = false;
+let offered = null;          // version already offered for manual download this session (no nagging every 6 h)
 
 function send(info) { const w = getWin(); if (w && !w.isDestroyed()) w.webContents.send('update', info); }
 
@@ -29,7 +30,7 @@ function setup(winGetter) {
   autoUpdater.on('update-available', (info) => {
     pendingVersion = info.version;
     send({ state: 'available', version: info.version, manual: manualOnly, url: RELEASES });
-    if (manualOnly) offerDownload(info.version);
+    if (manualOnly && offered !== info.version) { offered = info.version; offerDownload(info.version); }
   });
   autoUpdater.on('download-progress', (p) => send({ state: 'downloading', percent: Math.round(p.percent) }));
   autoUpdater.on('update-downloaded', (info) => {
