@@ -42,3 +42,20 @@ test('segment patterns: last segment cycles fastest, print range, lowercase lett
   assert.equal(all.values[3].text, 'UM-002-A'); assert.equal(all.values[155].text, 'UM-052-C'); assert.equal(all.values[155].n, 156);
   assert.equal(patternSeries({ ...defaultPattern(), from: 5, to: 4 }).values.length, 0);
 });
+// table mode
+import { tableValues, normalizeCell, rowComplete, parseTableText } from '../src/renderer/js/pattern.js';
+test('table mode: complete rows only, cells normalized like their segment', () => {
+  const pat = defaultPattern();
+  assert.equal(normalizeCell(pat.segments[1], '7'), '007');
+  assert.equal(normalizeCell(pat.segments[2], 'd'), 'D');
+  assert.equal(normalizeCell(pat.segments[0], ' UM '), 'UM');
+  assert.equal(rowComplete(['UM', '001', 'A'], 3), true);
+  assert.equal(rowComplete(['UM', '', 'A'], 3), false);
+  assert.equal(rowComplete(['UM', '001', 'A'], 0), false);
+  const rows = [['UM', '1', 'd'], ['UM', '', 'E'], ['UM', '12', 'e'], ['', '', '']];
+  const v = tableValues(rows, pat);
+  assert.deepEqual(v.map(x => x.text), ['UM-001-D', 'UM-012-E']);
+  assert.deepEqual(v[1].fields, { Project: 'UM', Number: '012', Letter: 'E' });
+  assert.equal(v[1].n, 3); assert.equal(v[1].i, 2);
+  assert.deepEqual(parseTableText('UM\t001\tD\nUM,002,E\nUM-003-F\n\n'), [['UM', '001', 'D'], ['UM', '002', 'E'], ['UM', '003', 'F']]);
+});

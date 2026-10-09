@@ -32,6 +32,7 @@
       <h2>Labels</h2>
       <div class="seg" id="modeSeg">
         <button data-mode="pattern" class="active">Pattern</button>
+        <button data-mode="table">Table</button>
         <button data-mode="single">Text</button>
         <button data-mode="batch">List</button>
       </div>
@@ -53,6 +54,18 @@
         <span id="patOf" class="muted"></span>
         <button id="patAll" class="small">All</button>
       </div>
+    </div>
+
+    <div id="mode-table" class="mode hidden">
+      <div class="row tbl-tools">
+        <button id="tblAdd" class="small">+ Row</button>
+        <button id="tblAddPattern" class="small" title="Append the labels currently selected in the Pattern (its print range)">+ Pattern selection</button>
+        <button id="tblPaste" class="small" title="Paste rows from the clipboard: one label per line, cells separated by tabs, commas or the separator">Paste rows</button>
+        <span class="spacer"></span>
+        <button id="tblClear" class="small danger" title="Remove every row">Clear</button>
+      </div>
+      <div class="tbl-wrap"><div id="tbl" class="tbl"></div></div>
+      <div class="series" id="tblSummary"></div>
     </div>
 
     <div id="mode-single" class="mode hidden">

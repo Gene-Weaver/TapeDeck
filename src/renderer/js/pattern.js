@@ -204,3 +204,46 @@ export function defaultPattern() {
     { name: 'Letter', type: 'letters', start: 'A', end: 'C' },
   ] };
 }
+
+// ---- Table mode: hand-built rows whose columns are the pattern's segments --------------------
+
+/** Format one cell the way its segment would: zero-pad numbers, match the letter case of the segment's start. */
+export function normalizeCell(seg, v) {
+  v = String(v ?? '').trim();
+  if (!v || !seg) return v;
+  if (seg.type === 'number' && /^-?\d+$/.test(v)) return pad(parseInt(v, 10), Number(seg.pad) || 0);
+  if (seg.type === 'letters' && /^[a-z]+$/i.test(v)) return /[a-z]/.test(String(seg.start || 'A')) ? v.toLowerCase() : v.toUpperCase();
+  return v;
+}
+
+export function rowComplete(row, segCount) {
+  for (let j = 0; j < segCount; j++) if (!String((row || [])[j] ?? '').trim()) return false;
+  return segCount > 0;
+}
+
+/**
+ * rows: [[cell, cell, ...], ...] aligned with pattern.segments. Only complete rows become labels.
+ * Each value: { text, n (1-based row number), i (1-based among printed), fields }.
+ */
+export function tableValues(rows, pattern) {
+  const segs = pattern.segments || [], sep = pattern.separator ?? '-';
+  const out = [];
+  (rows || []).forEach((row, k) => {
+    if (!rowComplete(row, segs.length)) return;
+    const cells = segs.map((sg, j) => normalizeCell(sg, row[j]));
+    const fields = {}; segs.forEach((sg, j) => { fields[sg.name || `s${j + 1}`] = cells[j]; });
+    out.push({ text: cells.join(sep), n: k + 1, i: out.length + 1, fields, row: k });
+  });
+  return out;
+}
+
+/** Split pasted text into rows of cells (tabs, commas or the pattern separator). */
+export function parseTableText(text, sep = '-') {
+  const lines = String(text || '').split(/\r?\n/).map(l => l.replace(/\s+$/, '')).filter(l => l.trim());
+  return lines.map(l => {
+    if (l.includes('\t')) return l.split('\t');
+    if (l.includes(',')) return l.split(',');
+    if (sep && l.includes(sep)) return l.split(sep);
+    return [l];
+  }).map(cells => cells.map(c => c.trim()));
+}

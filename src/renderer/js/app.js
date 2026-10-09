@@ -1,5 +1,5 @@
 import { tape, TAPES, mmToDots, dotsToMm, printSeconds, PRINT } from './tape.js';
-import { batchValues, patternSeries, patternSample, spread, defaultPattern } from './pattern.js';
+import { batchValues, patternSeries, patternSample, spread, defaultPattern, tableValues, normalizeCell, rowComplete, parseTableText } from './pattern.js';
 import { renderLabel, measureLabelWidth, canvasToPng, hydrateLayout, setSeries, readImageFile, FONTS } from './render.js';
 import { fromFile, toFileText, snapshot, signature } from './layout.js';
 import { Designer } from './designer.js';
@@ -18,6 +18,7 @@ const DEFAULTS = {
   pattern: defaultPattern(), patternVersion: 2,
   single: { text: 'Hello tape', copies: 1 },
   batch: { text: '', header: false, tpl: '' },
+  table: { rows: [] },
   options: { autoCut: true, cutEach: 1, marginMm: 2, mirror: false, flip: false, check: true, mock: false, mockTape: 6, offsetDots: 2, mmPerS: null },   // mmPerS: measured on real jobs
   designer: { zoom: 6, manualZoom: false, snap: true },
 };
@@ -35,7 +36,9 @@ function loadSettings(stored) {
   if (out.patternVersion !== 2) { out.pattern = defaultPattern(); out.patternVersion = 2; }   // 2026-10-02: Number before Letter
   if (!TAPES[out.tapeMm]) out.tapeMm = 6;
   if (out.options.speedModel !== 2) out.options.mmPerS = null;   // a speed measured under the old timing model (0.35 s cuts) does not fit the new one
-  if (!['pattern', 'single', 'batch'].includes(out.mode)) out.mode = 'pattern';
+  if (!['pattern', 'table', 'single', 'batch'].includes(out.mode)) out.mode = 'pattern';
+  if (!Array.isArray(out.table?.rows)) out.table = { rows: [] };
+  out.table.rows = out.table.rows.filter(Array.isArray).map(r => r.map(c => String(c ?? '')));
   delete out.wrap;
   return out;
 }
@@ -89,6 +92,7 @@ function computeValues() {
     return Array.from({ length: n }, (_, i) => ({ text: S.single.text, n: i + 1, i: i + 1, fields: {} }));
   }
   if (S.mode === 'pattern') { const r = patternSeries(S.pattern); seriesTotal = r.total; return r.values; }
+  if (S.mode === 'table') { const v = tableValues(S.table.rows, S.pattern); seriesTotal = S.table.rows.length; return v; }
   const v = batchValues({ text: S.batch.text, header: S.batch.header, template: S.batch.tpl }); seriesTotal = v.length; return v;
 }
 function sampleValue() { return values[0] || { text: 'UM-001-A', n: 1, i: 1, fields: {} }; }
@@ -96,10 +100,10 @@ function sampleValue() { return values[0] || { text: 'UM-001-A', n: 1, i: 1, fie
 // Text boxes set to "same width for all labels" are sized over the whole series, not just the print range.
 let seriesSig = null;
 function updateSeries() {
-  const sig = JSON.stringify(S.mode === 'pattern' ? ['p', S.pattern.segments, S.pattern.separator] : S.mode === 'batch' ? ['b', S.batch] : ['s', S.single.text]);
+  const sig = JSON.stringify(S.mode === 'pattern' ? ['p', S.pattern.segments, S.pattern.separator] : S.mode === 'table' ? ['t', S.table.rows, S.pattern.segments, S.pattern.separator] : S.mode === 'batch' ? ['b', S.batch] : ['s', S.single.text]);
   if (sig === seriesSig) return;
   seriesSig = sig;
-  setSeries(S.mode === 'pattern' ? patternSample(S.pattern) : S.mode === 'batch' ? spread(values) : values.slice(0, 1));
+  setSeries(S.mode === 'pattern' ? patternSample(S.pattern) : (S.mode === 'batch' || S.mode === 'table') ? spread(values) : values.slice(0, 1));
 }
 values = computeValues(); updateSeries();
 
@@ -154,7 +158,7 @@ const refreshPreview = debounce(async () => {
   if (values.length > shown) { const m = document.createElement('div'); m.className = 'more'; m.textContent = `… ${values.length - shown} more (all will print)`; strip.appendChild(m); }
   strip.querySelectorAll('.lab').forEach(el => io.observe(el));
   const secs = Math.round(printSeconds(dotsToMm(total), values.length, S.options.mmPerS || undefined));
-  const range = S.mode === 'pattern' && seriesTotal > values.length ? ` (labels ${S.pattern.from}–${S.pattern.to} of ${seriesTotal})` : '';
+  const range = S.mode === 'pattern' && seriesTotal > values.length ? ` (labels ${S.pattern.from}–${S.pattern.to} of ${seriesTotal})` : S.mode === 'table' && seriesTotal > values.length ? ` (${seriesTotal - values.length} incomplete row${seriesTotal - values.length === 1 ? '' : 's'} skipped)` : '';
   stats.textContent = values.length ? `${values.length} label${values.length === 1 ? '' : 's'}${range} · ${t.label} tape · ${fmtLen(total)} of tape (+ one blank lead piece per job) · ≈ ${secs >= 60 ? `${Math.floor(secs / 60)} min ${secs % 60} s` : `${secs} s`}` : 'No labels yet';
   $('btnPrint').textContent = values.length ? `Print ${values.length} label${values.length === 1 ? '' : 's'}` : 'Print';
   $('btnPrint').disabled = !values.length; $('btnExport').disabled = !values.length;
@@ -207,7 +211,7 @@ $('btnPrint').onclick = doPrint;
 $('btnExport').onclick = async () => {
   if (!values.length) return;
   const labels = await renderAllForOutput();
-  const j = await api.exportPngs({ labels: labels.map(l => ({ png: canvasToPng(l.canvas), name: l.name })), suggestedName: S.mode === 'single' ? 'label' : S.mode });
+  const j = await api.exportPngs({ labels: labels.map(l => ({ png: canvasToPng(l.canvas), name: l.name })), suggestedName: S.mode === 'single' ? 'label' : S.mode === 'table' ? 'table' : S.mode });
   if (j.ok) { toast(`Saved ${j.count} PNGs to ${j.dir}`, false, 6000); api.openPath(j.dir); } else if (!j.cancelled) toast(j.error || 'Export failed', true);
 };
 async function doFeedCut(btn) {
@@ -254,15 +258,16 @@ $('modeSeg').querySelectorAll('button').forEach(b => b.onclick = () => setMode(b
 function setMode(m) {
   S.mode = m; saveState();
   $('modeSeg').querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.mode === m));
-  for (const k of ['pattern', 'single', 'batch']) $(`mode-${k}`).classList.toggle('hidden', k !== m);
+  for (const k of ['pattern', 'table', 'single', 'batch']) $(`mode-${k}`).classList.toggle('hidden', k !== m);
+  if (m === 'table') renderTable();
   renderTokenHint(); refreshPreview();
 }
 function renderTokenHint() {
   let toks = [];
-  if (S.mode === 'pattern') toks = S.pattern.segments.map(sg => `{${sg.name}}`);
+  if (S.mode === 'pattern' || S.mode === 'table') toks = S.pattern.segments.map(sg => `{${sg.name}}`);
   else if (S.mode === 'batch') { const v = batchValues({ text: S.batch.text, header: S.batch.header }); if (v[0]) toks = Object.keys(v[0].fields).map(k => `{${k}}`); }
   $('dzTokens').innerHTML = toks.map(t => `<code>${esc(t)}</code>`).join(' ');
-  $('tokenHint').textContent = S.mode === 'pattern' ? 'Each segment is also available in the layout as a token, e.g. {Number}. The last segment cycles fastest.' : S.mode === 'batch' ? 'Columns are available in the layout as tokens.' : '';
+  $('tokenHint').textContent = S.mode === 'pattern' ? 'Each segment is also available in the layout as a token, e.g. {Number}. The last segment cycles fastest.' : S.mode === 'table' ? 'Columns are the Pattern’s segments. Only rows with every cell filled print; cells are formatted like the Pattern on leaving them.' : S.mode === 'batch' ? 'Columns are available in the layout as tokens.' : '';
 }
 // single
 bindInput('singleText', () => S.single.text, v => { S.single.text = v; });
@@ -321,6 +326,7 @@ function afterPatternChange() {
   const sel = patternSeries(S.pattern).values;
   $('patSummary').textContent = !total ? 'Add a segment to build a series.'
     : `${total} labels in the series: ${first} … ${last}\n` + (sel.length ? `Selected ${sel.length}: ${sel.slice(0, 4).map(v => v.text).join(', ')}${sel.length > 4 ? ' …' : ''}` : '“From” is after “to”: nothing selected.');
+  if (S.mode === 'table') renderTable();
   renderTokenHint(); refreshPreview();
 }
 $('segAdd').onclick = () => { S.pattern.segments.push({ name: `Part${S.pattern.segments.length + 1}`, type: 'number', start: 1, end: 9, pad: 0 }); saveState(); renderSegments(); afterPatternChange(); };
@@ -330,6 +336,89 @@ bindInput('patTo', () => S.pattern.to, v => { if (v !== '') S.pattern.to = Math.
 for (const id of ['patFrom', 'patTo']) $(id).addEventListener('blur', () => afterPatternChange());
 $('patAll').onclick = () => { S.pattern.from = 1; S.pattern.to = patternSeries({ ...S.pattern, from: 1, to: 1 }).total; saveState(); afterPatternChange(); };
 renderSegments();
+
+// ---------------------------------------------------------------- table mode
+function tableSave() { saveState(); renderTableSummary(); refreshPreview(); }
+function renderTableSummary() {
+  const segs = S.pattern.segments, rows = S.table.rows;
+  const complete = rows.filter(r => rowComplete(r, segs.length)).length;
+  const v = tableValues(rows, S.pattern);
+  $('tblSummary').textContent = !rows.length ? 'No rows yet. Add rows, append the Pattern’s selection, or paste lines.'
+    : `${complete} of ${rows.length} row${rows.length === 1 ? '' : 's'} complete → ${complete} label${complete === 1 ? '' : 's'}${rows.length - complete ? ` (${rows.length - complete} skipped)` : ''}\n${v.slice(0, 4).map(x => x.text).join(', ')}${v.length > 4 ? ' …' : ''}`;
+  $('tbl').querySelectorAll('.tbl-row').forEach((rowEl, k) => rowEl.classList.toggle('incomplete', !rowComplete(rows[k], segs.length)));
+}
+function renderTable() {
+  const root = $('tbl'), segs = S.pattern.segments, rows = S.table.rows;
+  const cols = `26px ${segs.map(() => 'minmax(60px, 1fr)').join(' ')} 52px`;
+  root.style.setProperty('--cols', cols);
+  root.innerHTML = '';
+  if (!segs.length) { root.innerHTML = '<div class="tbl-empty">Add segments in the Pattern first: they become the table’s columns.</div>'; renderTableSummary(); return; }
+  const head = document.createElement('div'); head.className = 'tbl-head';
+  head.innerHTML = `<span class="idx">#</span>${segs.map(sg => `<span>${esc(sg.name || '')}</span>`).join('')}<span></span>`;
+  root.appendChild(head);
+  if (!rows.length) { const e = document.createElement('div'); e.className = 'tbl-empty'; e.textContent = 'Empty. Use “+ Row” or paste lines.'; root.appendChild(e); }
+  rows.forEach((row, k) => {
+    const el = document.createElement('div'); el.className = 'tbl-row' + (rowComplete(row, segs.length) ? '' : ' incomplete'); el.dataset.k = k;
+    el.innerHTML = `<span class="idx">${k + 1}</span>` + segs.map((sg, j) => `<input data-j="${j}" value="${esc(row[j] ?? '')}" placeholder="${esc(sg.type === 'text' ? (sg.value || sg.name) : sg.type === 'number' ? String(sg.start ?? '') : (sg.start ?? 'A'))}" spellcheck="false" autocomplete="off">`).join('')
+      + `<span class="acts"><button class="dup" title="Duplicate row">⧉</button><button class="x" title="Delete row">×</button></span>`;
+    el.querySelectorAll('input').forEach(inp => {
+      const j = +inp.dataset.j;
+      inp.addEventListener('input', () => { row[j] = inp.value; tableSave(); });
+      inp.addEventListener('blur', () => { const n = normalizeCell(segs[j], inp.value); if (n !== inp.value) { inp.value = n; row[j] = n; tableSave(); } });
+      inp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); if (k === rows.length - 1) { tableAddRow(); } focusCell(k + 1, j); }
+        else if (e.key === 'ArrowDown') { e.preventDefault(); focusCell(k + 1, j); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); focusCell(k - 1, j); }
+        else if (e.key === 'Backspace' && !inp.value && !row.some(c => c) && rows.length > 1) { e.preventDefault(); tableDeleteRow(k); focusCell(Math.max(0, k - 1), j); }
+      });
+      inp.addEventListener('paste', (e) => {
+        const text = (e.clipboardData || window.clipboardData).getData('text');
+        if (!/[\n\t]/.test(text)) return;          // a plain value pastes into the cell as usual
+        e.preventDefault();
+        const parsed = parseTableText(text, S.pattern.separator);
+        if (!parsed.length) return;
+        parsed.forEach((cells, r) => {
+          const target = k + r;
+          while (rows.length <= target) rows.push(segs.map(() => ''));
+          cells.forEach((c, cj) => { if (j + cj < segs.length) rows[target][j + cj] = normalizeCell(segs[j + cj], c); });
+        });
+        renderTable(); tableSave(); focusCell(k + parsed.length - 1, j);
+      });
+    });
+    el.querySelector('.dup').onclick = () => { rows.splice(k + 1, 0, [...row]); renderTable(); tableSave(); focusCell(k + 1, segs.length - 1); };
+    el.querySelector('.x').onclick = () => { tableDeleteRow(k); };
+    root.appendChild(el);
+  });
+  renderTableSummary();
+}
+function focusCell(k, j) { const inp = $('tbl').querySelector(`.tbl-row[data-k="${k}"] input[data-j="${j}"]`); if (inp) { inp.focus(); inp.select(); } }
+function tableAddRow(cells) {
+  const segs = S.pattern.segments, rows = S.table.rows;
+  const last = rows[rows.length - 1];
+  // a new row starts from the constant parts of the row above (e.g. "UM") so only the changing cells need typing
+  const row = segs.map((sg, j) => cells ? (cells[j] ?? '') : (sg.type === 'text' ? ((last && last[j]) || sg.value || '') : ''));
+  rows.push(row); renderTable(); tableSave();
+  return rows.length - 1;
+}
+function tableDeleteRow(k) { S.table.rows.splice(k, 1); renderTable(); tableSave(); }
+$('tblAdd').onclick = () => { const k = tableAddRow(); const segs = S.pattern.segments; const j = segs.findIndex(sg => sg.type !== 'text'); focusCell(k, j < 0 ? 0 : j); };
+$('tblAddPattern').onclick = () => {
+  const sel = patternSeries(S.pattern).values;
+  if (!sel.length) { toast('The Pattern has nothing selected.', true); return; }
+  const segs = S.pattern.segments;
+  for (const v of sel) S.table.rows.push(segs.map(sg => v.fields[sg.name] ?? ''));
+  renderTable(); tableSave(); toast(`Added ${sel.length} row${sel.length === 1 ? '' : 's'} from the Pattern.`);
+};
+$('tblPaste').onclick = async () => {
+  let text = '';
+  try { text = await navigator.clipboard.readText(); } catch { toast('Clipboard not readable; paste into a cell instead.', true); return; }
+  const parsed = parseTableText(text, S.pattern.separator);
+  if (!parsed.length) { toast('Nothing to paste.', true); return; }
+  const segs = S.pattern.segments;
+  for (const cells of parsed) S.table.rows.push(segs.map((sg, j) => normalizeCell(sg, cells[j] ?? '')));
+  renderTable(); tableSave(); toast(`Pasted ${parsed.length} row${parsed.length === 1 ? '' : 's'}.`);
+};
+$('tblClear').onclick = () => { if (!S.table.rows.length) return; S.table.rows = []; renderTable(); tableSave(); };
 
 // dock
 $('zoom').value = S.zoom; $('zoomTxt').textContent = `${S.zoom}×`;
