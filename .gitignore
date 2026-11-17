@@ -15,3 +15,9 @@ Icon?
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Launcher app built by launcher/make_launcher.sh
+launcher/TapeDeck.app/
+
+# Backups kept when replacing files (<name>.bak-<date>)
+*.bak-*

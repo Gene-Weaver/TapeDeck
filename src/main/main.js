@@ -32,6 +32,8 @@ app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(
 function createWindow() {
   const background = !!process.env.TAPEDECK_BACKGROUND;   // automated UI tests: never show or focus the window
   if (background && app.dock) app.dock.hide();
+  const dockIcon = path.join(__dirname, '..', '..', 'build', 'icon.png');     // run through Electron (npm start, the launcher), the Dock would show Electron's own icon
+  if (!background && app.dock && !app.isPackaged && fs.existsSync(dockIcon)) app.dock.setIcon(dockIcon);
   win = new BrowserWindow({
     width: 1400, height: 980, minWidth: 980, minHeight: 700,
     title: 'TapeDeck', backgroundColor: '#15171c', show: false,

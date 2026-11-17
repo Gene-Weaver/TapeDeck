@@ -13,6 +13,8 @@ what you see on the tape preview is exactly the bitmap the printer receives.
 renderer (canvas, 180 dpi, 1-bit)  →  pixels over IPC  →  raster commands  →  libusb  →  PT-P700
 ```
 
+![TapeDeck](docs/tapedeck.png)
+
 ## Install
 
 Download the latest installer from
